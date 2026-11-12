@@ -13,7 +13,7 @@ public final class WhatsAppParser {
         "^\\[\\d{1,2}[/.]\\d{1,2}[/.]\\d{2,4},?\\s+\\d{1,2}:\\d{2}(?::\\d{2})?\\s*(?:[AaPp]\\.?[Mm]\\.?)?\\]\\s*([^:]{1,90}):\\s*(.*)$",Pattern.UNICODE_CHARACTER_CLASS);
     // Fail closed on unknown WhatsApp headers: never attribute a new speaker to the prior one.
     private static final Pattern ANY_TIMESTAMP=Pattern.compile(
-        "^\\[?\\d{1,2}[/.]\\d{1,2}[/.]\\d{2,4}.*",Pattern.UNICODE_CHARACTER_CLASS);
+        "^\\[?\\d{1,4}[-/.]\\d{1,2}[-/.]\\d{1,4}.*",Pattern.UNICODE_CHARACTER_CLASS);
     private WhatsAppParser(){}
     public static Map<String,StringBuilder> bySender(String exported){
         Map<String,StringBuilder> result=new LinkedHashMap<>();

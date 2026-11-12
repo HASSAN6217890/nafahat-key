@@ -35,6 +35,12 @@ public final class TestCore {
         Map<String,StringBuilder> ios=WhatsAppParser.bySender(
           "[12/11/26, 18:51:22] Hanna: Hello\n[12/11/26, 18:52:22] Alex: Welcome\n");
         check(ios.size()==2&&ios.containsKey("Hanna"),"iOS export format");
+        Map<String,StringBuilder> strict=WhatsAppParser.bySender(
+            "12/11/2026, 18:51 - Me: My message\n"+
+            "2026-11-12 18:52 - Other: Hidden foreign message\n"+
+            "continued unknown message\n");
+        check(!strict.get("Me").toString().contains("Hidden foreign"),
+            "unknown header must not leak other speaker data");
         System.out.println("Pure Java layout/parser unit tests passed.");
     }
 }
