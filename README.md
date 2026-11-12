@@ -41,7 +41,7 @@ Every push to `main` runs `.github/workflows/android-debug.yml` and publishes `N
 
 - If the repository secrets `NAFAHATKEY_KEYSTORE_B64`, `NAFAHATKEY_STORE_PASSWORD`,
   `NAFAHATKEY_KEY_ALIAS` and `NAFAHATKEY_KEY_PASSWORD` all exist, CI builds a **signed release**
-  (`versionCode = run_number + 100`, `versionName = 0.3.<run>`); otherwise it builds the debug APK.
+  (`versionCode = run_number + 100`, `versionName = 0.4.<run>`); otherwise it builds the debug APK.
   `BUILD_INFO.txt` says which one was built.
 - The keystore and passwords live only in GitHub Secrets; never commit them.
 - Moving from 0.2 (debug key) to the signed release needs one uninstall; later updates install over it.
