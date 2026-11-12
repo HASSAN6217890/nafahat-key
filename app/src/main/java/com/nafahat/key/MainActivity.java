@@ -97,8 +97,8 @@ public final class MainActivity extends Activity {
         statusText = UiKit.text(this, "", 13, false);
         content.addView(statusText);
         LinearLayout act = row();
-        act.addView(UiKit.button(this, "تفعيل الكيبورد"), weight());
-        act.addView(UiKit.secondary(this, "اختيار الكيبورد"), weight());
+        act.addView(UiKit.button(this, "تفعيل لوحة المفاتيح"), weight());
+        act.addView(UiKit.secondary(this, "اختيار لوحة المفاتيح"), weight());
         act.getChildAt(0).setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
         act.getChildAt(1).setOnClickListener(v -> {
             InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -160,8 +160,8 @@ public final class MainActivity extends Activity {
         content.addView(test, new LinearLayout.LayoutParams(-1, -2));
 
         // Learning
-        section("علّم الكيبورد من كلامي");
-        note("اختر ملف تصدير محادثة واتساب (ملف نصي أو مضغوط)، أو الصق نصاً. يتعلّم الكيبورد من رسائلك أنت فقط، "
+        section("علّم لوحة المفاتيح من كلامي");
+        note("اختر ملف تصدير محادثة واتساب (ملف نصي أو مضغوط)، أو الصق نصاً. تتعلّم لوحة المفاتيح من رسائلك أنت فقط، "
             + "وتجري المعالجة على هذا الجهاز، ولا يُحفظ الملف بعد المعالجة.");
         learnedText = UiKit.text(this, "", 13, false);
         learnedText.setTextColor(UiKit.GREEN);
@@ -172,9 +172,9 @@ public final class MainActivity extends Activity {
         learn.getChildAt(0).setOnClickListener(v -> pickChatFile());
         learn.getChildAt(1).setOnClickListener(v -> pasteTextDialog());
         content.addView(learn, new LinearLayout.LayoutParams(-1, UiKit.dp(this, 46)));
-        Button clear = UiKit.secondary(this, "مسح ما تعلّمه الكيبورد");
+        Button clear = UiKit.secondary(this, "مسح ما تعلّمته لوحة المفاتيح");
         clear.setOnClickListener(v -> new AlertDialog.Builder(this)
-            .setMessage("سيُحذف كل ما تعلّمه الكيبورد من كتابتك على هذا الجهاز. هل تريد المتابعة؟")
+            .setMessage("سيُحذف كل ما تعلّمته لوحة المفاتيح من كتابتك على هذا الجهاز. هل تريد المتابعة؟")
             .setNegativeButton("إلغاء", null)
             .setPositiveButton("مسح", (d, w) -> {
                 UserDict.get(this).clearAll();
@@ -196,7 +196,7 @@ public final class MainActivity extends Activity {
         section("التصدير والاستيراد");
         note("ملف محلي يحوي المجموعات والنصوص والإعدادات، لنقلها إلى هاتف آخر أو لموظف جديد.");
         includeDictionary = new CheckBox(this);
-        includeDictionary.setText("تضمين القاموس الشخصي (ما تعلّمه الكيبورد)");
+        includeDictionary.setText("تضمين القاموس الشخصي (ما تعلّمته لوحة المفاتيح)");
         includeDictionary.setTextSize(14);
         content.addView(includeDictionary);
         LinearLayout backup = row();
@@ -207,8 +207,8 @@ public final class MainActivity extends Activity {
         content.addView(backup, new LinearLayout.LayoutParams(-1, UiKit.dp(this, 46)));
 
         section("الخصوصية");
-        note("لا يملك الكيبورد صلاحية الإنترنت، ولا يرسل شيئاً خارج الجهاز. في حقول كلمات المرور والحقول الحساسة "
-            + "لا تظهر معاينة ولا اقتراحات ولا مكتبة، ولا يتعلّم شيئاً. لا يقرأ الحافظة إلا عند ضغط «حفظ المنسوخ».");
+        note("لا تملك لوحة المفاتيح صلاحية الإنترنت، ولا ترسل شيئاً خارج الجهاز. في حقول كلمات المرور والحقول الحساسة "
+            + "لا تظهر معاينة ولا اقتراحات ولا مكتبة، ولا تتعلّم شيئاً. ولا تقرأ الحافظة إلا عند ضغط «حفظ المنسوخ».");
         updateStatus();
         updateLearnedCount();
     }
@@ -244,16 +244,16 @@ public final class MainActivity extends Activity {
         }
         String current = Settings.Secure.getString(getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD);
         boolean selected = current != null && current.startsWith(getPackageName() + "/");
-        statusText.setText(selected ? "الحالة: كيبورد نفحات مفعّل ومختار للكتابة."
-            : enabled ? "الحالة: مفعّل، لكنه غير مختار. اضغط «اختيار الكيبورد»."
-            : "الحالة: غير مفعّل بعد. اضغط «تفعيل الكيبورد» ثم فعّل «كيبورد نفحات».");
+        statusText.setText(selected ? "الحالة: لوحة مفاتيح نفحات مفعّلة ومختارة للكتابة."
+            : enabled ? "الحالة: مفعّلة، لكنها غير مختارة. اضغط «اختيار لوحة المفاتيح»."
+            : "الحالة: غير مفعّلة بعد. اضغط «تفعيل لوحة المفاتيح» ثم فعّل «كيبورد نفحات».");
         statusText.setTextColor(selected ? UiKit.GREEN : UiKit.GOLD);
     }
 
     private void updateLearnedCount() {
         if (learnedText == null) return;
         int n = UserDict.get(this).size();
-        learnedText.setText(n == 0 ? "لم يتعلّم الكيبورد كلمات خاصة بك بعد." : "القاموس الشخصي: " + n + " كلمة.");
+        learnedText.setText(n == 0 ? "لم تتعلّم لوحة المفاتيح كلمات خاصة بك بعد." : "القاموس الشخصي: " + n + " كلمة.");
     }
 
     // ------------------------------------------------------------------ learning

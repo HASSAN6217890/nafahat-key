@@ -423,14 +423,21 @@ public final class KeyboardView extends View {
     }
 
     // ------------------------------------------------------------------ touch
+    /**
+     * Haptic feedback without the VIBRATE permission. Level 1 light (KEYBOARD_TAP), level 2 default
+     * (VIRTUAL_KEY, a clearly felt click), level 3 strong (LONG_PRESS). FLAG_IGNORE_GLOBAL_SETTING lets
+     * it work even when the phone's "touch vibration" is off on Android < 13 (ignored from 13 on).
+     */
+    @SuppressWarnings("deprecation")
     private void haptic() {
         if (!hapticEnabled) return;
         int c;
-        if (hapticLevel <= 1) c = HapticFeedbackConstants.CLOCK_TICK;
-        else if (hapticLevel == 2) c = Build.VERSION.SDK_INT >= 27 ? HapticFeedbackConstants.KEYBOARD_PRESS
-            : HapticFeedbackConstants.KEYBOARD_TAP;
-        else c = HapticFeedbackConstants.VIRTUAL_KEY;
-        performHapticFeedback(c, HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+        if (hapticLevel <= 1) c = HapticFeedbackConstants.KEYBOARD_TAP;
+        else if (hapticLevel == 2) c = HapticFeedbackConstants.VIRTUAL_KEY;
+        else c = HapticFeedbackConstants.LONG_PRESS;
+        int flags = HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING;
+        if (Build.VERSION.SDK_INT < 33) flags |= HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING;
+        performHapticFeedback(c, flags);
     }
 
     private RectF toOverlay(RectF r) {
@@ -540,6 +547,7 @@ public final class KeyboardView extends View {
         p.popupStartX = p.lastX;
         overlay.hidePreview();
         overlay.showPopup(toOverlay(p.key.rect), p.key.popup, keyTextPx() * 0.85f);
+        overlay.selectAt(overlayX(p.lastX)); // preselect the option under the finger
         haptic();
     }
 
@@ -560,7 +568,8 @@ public final class KeyboardView extends View {
                     if (listener != null) listener.onCursorMove(steps - p.cursorSteps);
                     p.cursorSteps = steps;
                 }
-            } else if (!p.spaceSwipe && Math.abs(dx) > 48 * density && Math.abs(dx) > Math.abs(y - p.downY)) {
+            } else if (!p.spaceSwipe && Math.abs(dx) >= Math.max(48 * density, p.key.rect.width() * 0.35f)
+                && Math.abs(dx) > 2f * Math.abs(y - p.downY)) {
                 p.spaceSwipe = true;
                 cancelTimers(p);
             }

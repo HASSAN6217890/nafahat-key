@@ -411,9 +411,9 @@ public final class LibraryDb extends SQLiteOpenHelper {
         CHANGES.incrementAndGet();
     }
 
+    /** Usage counters only; no backup here so the .bak keeps the last real content change. */
     public synchronized void markUsed(long id) {
         try {
-            backup();
             getWritableDatabase().execSQL("UPDATE snippets SET use_count=use_count+1, last_used=? WHERE id=?",
                 new Object[]{System.currentTimeMillis(), id});
             CHANGES.incrementAndGet();
@@ -469,8 +469,13 @@ public final class LibraryDb extends SQLiteOpenHelper {
                 if (o == null) continue;
                 String name = o.optString("name", "").trim();
                 if (name.isEmpty()) continue;
+                boolean existed = false;
+                try (Cursor c = db.rawQuery("SELECT id FROM collections WHERE name=? AND builtin=0", new String[]{name})) {
+                    existed = c.moveToFirst();
+                }
                 long cid = findOrCreateCollection(db, name);
-                if (o.optBoolean("archived", false)) {
+                // Existing collections are never archived or otherwise changed by an import.
+                if (!existed && o.optBoolean("archived", false)) {
                     ContentValues a = new ContentValues();
                     a.put("archived", 1);
                     db.update("collections", a, "id=?", new String[]{String.valueOf(cid)});

@@ -108,12 +108,35 @@ public final class LibraryPanel extends FrameLayout {
         return hs;
     }
 
-    /** Rebuilds the panel from the database (cheap: a few small queries). */
+    private java.util.concurrent.Executor executor;
+    private int loadSeq;
+
+    public void setExecutor(java.util.concurrent.Executor e) { executor = e; }
+
+    /** Reloads from the database on the background executor, then rebuilds on the main thread. */
     public void refresh() {
+        final int seq = ++loadSeq;
+        final long col = selectedCollection;
+        Runnable load = () -> {
+            LibraryDb db = LibraryDb.get(ctx);
+            List<SnippetCollection> cols = db.collections(false);
+            boolean found = col < 0;
+            for (SnippetCollection c : cols) if (c.id == col) found = true;
+            List<Snippet> all = db.snippets(found ? col : -1);
+            final boolean ok = found;
+            post(() -> {
+                if (seq != loadSeq) return;
+                if (!ok) selectedCollection = -1;
+                build(cols, all);
+            });
+        };
+        if (executor != null) executor.execute(load); else new Thread(load).start();
+    }
+
+    private void build(List<SnippetCollection> cols, List<Snippet> all) {
         removePreview();
         column.removeAllViews();
         setBackgroundColor(theme.background);
-        LibraryDb db = LibraryDb.get(ctx);
 
         // search + save clipboard
         LinearLayout top = new LinearLayout(ctx);
@@ -150,14 +173,10 @@ public final class LibraryPanel extends FrameLayout {
         // collections
         List<TextView> cchips = new ArrayList<>();
         cchips.add(chip("الكل", selectedCollection < 0, v -> { selectedCollection = -1; refresh(); }));
-        List<SnippetCollection> cols = db.collections(false);
-        boolean found = selectedCollection < 0;
         for (SnippetCollection c : cols) {
-            if (c.id == selectedCollection) found = true;
             final long id = c.id;
             cchips.add(chip(c.name, c.id == selectedCollection, v -> { selectedCollection = id; refresh(); }));
         }
-        if (!found) selectedCollection = -1;
         column.addView(chipRow(cchips));
 
         // types
@@ -170,7 +189,6 @@ public final class LibraryPanel extends FrameLayout {
         column.addView(chipRow(tchips));
 
         // list
-        List<Snippet> all = db.snippets(selectedCollection);
         List<Snippet> filtered = new ArrayList<>();
         String q = TextNorm.normalize(query.trim());
         for (Snippet s : all) {

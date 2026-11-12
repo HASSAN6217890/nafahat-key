@@ -98,6 +98,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         grid.setListener(this);
         library = new LibraryPanel(this);
         library.setHost(this);
+        library.setExecutor(bg);
         content.addView(keyboard, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(library, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -171,6 +172,15 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         theme = prefs.resolveTheme(this);
         if (numberRowCached != prefs.numberRow()) { layouts.clear(); numberRowCached = prefs.numberRow(); }
         int h = KeyboardView.computeHeight(this, layoutFor("ar"), prefs.heightPercent());
+        // Reserve room above the strip so the tallest preview / long-press bubble never clips.
+        float d = getResources().getDisplayMetrics().density;
+        float pct = prefs.heightPercent() / 100f;
+        float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
+        float keyDp = tallestRowDp - 6f;
+        float neededDp = Math.max(keyDp * 1.25f, Math.max(keyDp, 44f) + 4f) + 8f;
+        int spacerPx = Math.round(Math.max(8f, neededDp - 46f) * d);
+        ViewGroup.LayoutParams lp = spacer.getLayoutParams();
+        if (lp != null && lp.height != spacerPx) { lp.height = spacerPx; spacer.setLayoutParams(lp); }
         keyboard.setKeyboardHeight(h);
         grid.setPanelHeight(h);
         library.setPanelHeight(h);
@@ -520,27 +530,35 @@ public final class NafahatKeyboardService extends InputMethodService implements 
             Toast.makeText(this, "لا يوجد نص منسوخ", Toast.LENGTH_SHORT).show();
             return;
         }
-        LibraryDb db = LibraryDb.get(this);
-        long target = collectionId;
-        if (target >= 0) {
-            for (SnippetCollection c : db.collections(false)) if (c.id == target && c.isBuiltin()) target = -1;
-        }
-        if (target < 0) target = db.addCollection("نصوص محفوظة");
-        Snippet s = new Snippet();
-        String body = text.toString().trim();
-        s.collectionId = target;
-        s.body = body;
-        String firstLine = body.split("\n", 2)[0].trim();
-        s.title = firstLine.length() > 30 ? firstLine.substring(0, 30) + "…" : firstLine;
-        s.type = "أخرى";
-        db.saveSnippet(s);
-        Toast.makeText(this, "تم حفظ النص في المكتبة", Toast.LENGTH_SHORT).show();
-        library.refresh();
+        final String body = text.toString().trim();
+        final Context app = getApplicationContext();
+        runOnBackground(() -> {
+            LibraryDb db = LibraryDb.get(app);
+            long target = collectionId;
+            if (target >= 0) {
+                for (SnippetCollection c : db.collections(false)) if (c.id == target && c.isBuiltin()) target = -1;
+            }
+            if (target < 0) target = db.addCollection("نصوص محفوظة");
+            Snippet s = new Snippet();
+            s.collectionId = target;
+            s.body = body;
+            String firstLine = body.split("\n", 2)[0].trim();
+            s.title = firstLine.length() > 30 ? firstLine.substring(0, 30) + "…" : firstLine;
+            s.type = "أخرى";
+            db.saveSnippet(s);
+            root.post(() -> {
+                Toast.makeText(this, "تم حفظ النص في المكتبة", Toast.LENGTH_SHORT).show();
+                library.refresh();
+            });
+        });
     }
 
     @Override public void togglePin(Snippet s) {
-        LibraryDb.get(this).setPinned(s.id, !s.pinned);
-        library.refresh();
+        final Context app = getApplicationContext();
+        runOnBackground(() -> {
+            LibraryDb.get(app).setPinned(s.id, !s.pinned);
+            root.post(() -> library.refresh());
+        });
     }
 
     // ------------------------------------------------------------------ InputHandler.Ui

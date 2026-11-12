@@ -212,6 +212,8 @@ public final class InputHandler {
                 && candEnd - candStart <= word.length())
                 || (candStart < 0 && composeStart >= 0 && newSelStart <= composeStart));
         } else {
+            // A composing region while we are not composing comes from a stale update: ignore it.
+            if (candStart >= 0) return;
             ours = collapsed && (belief < 0 || newSelStart == belief || wasRecent(newSelStart));
             if (ours && belief < 0) belief = newSelStart;
         }
@@ -295,8 +297,9 @@ public final class InputHandler {
             if (typed.startsWith("#")) allowCorrection = false;
             if (allowCorrection && autocorrectOn() && !TextNorm.hasDigit(typed) && scriptMatches(typed)
                 && suggester.ready(arabic)) {
-                Suggester.Result r = suggester.now(typed, arabic, true);
-                if (r.autoCorrect != null && !r.autoCorrect.equals(typed)) {
+                // Only a result already computed off the main thread is used; otherwise commit as typed.
+                Suggester.Result r = suggester.cached(typed, arabic);
+                if (r != null && r.autoCorrect != null && !r.autoCorrect.equals(typed)) {
                     committed = r.autoCorrect;
                     corr = new Correction(typed, committed, sep == null ? "" : sep);
                 }
@@ -372,10 +375,7 @@ public final class InputHandler {
         InputConnection ic = ui.ic();
         if (ic == null) return;
         autoSpace = false;
-        if (repeat == 0 && lastCorrection != null && word.length() == 0 && belief == lastCorrection.end) {
-            revertCorrection();
-            return;
-        }
+        if (repeat == 0 && lastCorrection != null && word.length() == 0 && revertCorrection()) return;
         lastCorrection = null;
         if (word.length() > 0) {
             if (repeat > 15) {
@@ -430,20 +430,20 @@ public final class InputHandler {
         int start = remaining.length();
         while (start > 0 && TextNorm.isWordChar(remaining.charAt(start - 1))) start--;
         String tail = remaining.substring(start);
-        boolean resume = !tail.isEmpty() && tail.length() <= 24 && canSuggest()
+        boolean resume = !tail.isEmpty() && tail.length() <= 24 && canSuggest() && belief >= units + tail.length()
             && (start > 0 ? Character.isWhitespace(remaining.charAt(start - 1)) : b.length() < 48);
         if (resume) {
-            // Re-open the previous word for suggestions using relative edits only (no absolute positions).
+            CharSequence after = ic.getTextAfterCursor(1, 0);
+            if (after != null && after.length() > 0 && TextNorm.isWordChar(after.charAt(0))) resume = false;
+        }
+        if (resume) {
+            // Re-open the previous word for suggestions: mark it as composing, no delete / retype.
             ic.beginBatchEdit();
-            ic.deleteSurroundingText(units + tail.length(), 0);
-            ic.setComposingText(tail, 1);
+            ic.deleteSurroundingText(units, 0);
+            setBelief(belief - units);
+            composeStart = belief - tail.length();
+            ic.setComposingRegion(composeStart, belief);
             ic.endBatchEdit();
-            if (belief >= 0) {
-                composeStart = belief - units - tail.length();
-                setBelief(belief - units);
-            } else {
-                composeStart = -1;
-            }
             word.setLength(0);
             word.append(tail);
             prevWord = null;
@@ -484,11 +484,15 @@ public final class InputHandler {
         updateStrip();
     }
 
-    private void revertCorrection() {
+    private boolean revertCorrection() {
         Correction c = lastCorrection;
         lastCorrection = null;
         InputConnection ic = ui.ic();
-        if (c == null || ic == null) return;
+        if (c == null || ic == null) return false;
+        // Only undo when the corrected word really sits just before the cursor.
+        String expect = c.corrected + c.sep;
+        CharSequence before = ic.getTextBeforeCursor(expect.length(), 0);
+        if (before == null || !expect.contentEquals(before)) { updateStrip(); return false; }
         ic.beginBatchEdit();
         ic.deleteSurroundingText(c.corrected.length() + c.sep.length(), 0);
         ic.commitText(c.original + c.sep, 1);
@@ -498,6 +502,7 @@ public final class InputHandler {
         if (learnField && !sensitive) userDict.learn(c.original, null, 2);
         prevWord = UserDict.learnable(c.original) ? c.original : null;
         updateStrip();
+        return true;
     }
 
     // ================================================================== shift
@@ -616,14 +621,14 @@ public final class InputHandler {
             ui.showStrip(items, false);
             return;
         }
-        if (lastCorrection != null && belief == lastCorrection.end) {
+        if (lastCorrection != null) {
             CandidateStrip.Item u = new CandidateStrip.Item("↶ " + lastCorrection.original, CandidateStrip.UNDO, null);
             u.strong = true;
             items.add(u);
         }
         if (emptyField && items.isEmpty()) {
             items.add(new CandidateStrip.Item(BrandData.GREETING, CandidateStrip.PHRASE, BrandData.GREETING));
-            for (Snippet s : LibraryDb.get(context).mostUsed(2))
+            for (Snippet s : topUsed(2))
                 items.add(new CandidateStrip.Item(s.title, CandidateStrip.SNIPPET, s));
             ui.showStrip(items, false);
             return;
@@ -706,19 +711,43 @@ public final class InputHandler {
     }
 
     // ================================================================== library
+    private List<Snippet> topUsedCache = new ArrayList<>();
+    private boolean libraryLoading;
+    private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /** Library data for #shortcuts and the empty-field strip; refreshed off the main thread. */
     private List<Snippet> snippets() {
         int v = LibraryDb.CHANGES.get();
-        if (snippetCache == null || v != snippetCacheVersion) {
-            snippetCache = LibraryDb.get(context).snippets(-1);
-            snippetCacheVersion = v;
+        if ((snippetCache == null || v != snippetCacheVersion) && !libraryLoading) {
+            libraryLoading = true;
+            ui.runOnBackground(() -> {
+                LibraryDb db = LibraryDb.get(context);
+                int version = LibraryDb.CHANGES.get();
+                List<Snippet> all = db.snippets(-1);
+                List<Snippet> top = db.mostUsed(3);
+                mainHandler.post(() -> {
+                    snippetCache = all;
+                    topUsedCache = top;
+                    snippetCacheVersion = version;
+                    libraryLoading = false;
+                    if (word.length() == 0 || word.charAt(0) == '#') updateStrip();
+                });
+            });
         }
-        return snippetCache;
+        return snippetCache == null ? new ArrayList<>() : snippetCache;
+    }
+
+    private List<Snippet> topUsed(int n) {
+        snippets();
+        List<Snippet> out = new ArrayList<>();
+        for (Snippet s : topUsedCache) { if (out.size() >= n) break; out.add(s); }
+        return out;
     }
 
     private List<Snippet> matchShortcuts(String q, int max) {
         List<Snippet> out = new ArrayList<>();
         String n = TextNorm.normalize(q);
-        if (n.isEmpty()) return LibraryDb.get(context).mostUsed(max);
+        if (n.isEmpty()) return topUsed(max);
         for (Snippet s : snippets()) {
             if (!s.shortcut.isEmpty() && TextNorm.normalize(s.shortcut.replace("#", "")).startsWith(n)) out.add(s);
             if (out.size() >= max) return out;
@@ -878,7 +907,7 @@ public final class InputHandler {
 
     /** ⊞ «تراجع»: reverts the last autocorrection, otherwise asks the app to undo (Ctrl+Z). */
     public void undo() {
-        if (lastCorrection != null && word.length() == 0 && belief == lastCorrection.end) { revertCorrection(); return; }
+        if (lastCorrection != null && word.length() == 0 && revertCorrection()) return;
         InputConnection ic = ui.ic();
         if (ic == null) return;
         commitWordAsIs();
