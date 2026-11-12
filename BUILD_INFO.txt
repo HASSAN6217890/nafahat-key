@@ -1,6 +1,6 @@
 debug
 file=NafahatKeyDebug.apk
 applicationId=com.nafahat.key.debug
-versionName=0.4.23-debug
-versionCode=123
-commit=fc5b323e7dd20a9891f5fb34a9ba2493983a5f89
+versionName=0.4.25-debug
+versionCode=125
+commit=183a17e8f5619bee21aa78ca9262e1520d6e921b
