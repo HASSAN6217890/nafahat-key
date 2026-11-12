@@ -19,7 +19,7 @@ jobs:
           gradle-version: '8.9'
       - name: Throwaway key, same env contract as the real workflow
         run: |
-          keytool -genkeypair -keystore "$RUNNER_TEMP/t.jks" -storepass testpass1 -keypass testpass2 \
+          keytool -genkeypair -keystore "$RUNNER_TEMP/t.jks" -storepass testpass1 -keypass testpass1 \
             -alias testalias -keyalg RSA -keysize 2048 -validity 2 -dname "CN=selftest" -noprompt
           B64=$(base64 -w0 "$RUNNER_TEMP/t.jks")
           printf '%s' "$B64" | base64 -d -i > "$RUNNER_TEMP/decoded.jks"
@@ -31,7 +31,7 @@ jobs:
           NAFAHATKEY_KEYSTORE_PATH: ${{ runner.temp }}/decoded.jks
           NAFAHATKEY_STORE_PASSWORD: testpass1
           NAFAHATKEY_KEY_ALIAS: testalias
-          NAFAHATKEY_KEY_PASSWORD: testpass2
+          NAFAHATKEY_KEY_PASSWORD: testpass1
         run: |
           gradle --no-daemon :app:assembleRelease
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
