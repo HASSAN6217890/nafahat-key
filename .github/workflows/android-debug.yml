@@ -2,7 +2,7 @@ name: Build Android debug APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'feature/nafahatkey-0.2']
+    branches: [main, 'feature/nafahatkey-0.2', 'test/nafahatkey-v02-parallel']
 jobs:
   build:
     runs-on: ubuntu-latest

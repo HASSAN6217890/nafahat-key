@@ -16,6 +16,7 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     buildTypes {
+        debug { applicationIdSuffix '.preview' }
         release { minifyEnabled false }
     }
 }
