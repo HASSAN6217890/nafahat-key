@@ -33,14 +33,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** One local-only settings and snippet management screen. */
 public final class MainActivity extends Activity {
     private static final int IMPORT_CHAT=501, IMPORT_LIBRARY=502, EXPORT_LIBRARY=503;
-    private static final Pattern WHATSAPP_LINE=Pattern.compile(
-        "^\\[?\\d{1,2}[/.]\\d{1,2}[/.]\\d{2,4},?\\s+\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[AaPp]\\.?[Mm]\\.?)?\\]?\\s*(?:[-–]\\s*)?([^:]{1,90}):\\s*(.*)$");
     private KeyboardPrefs prefs;
     private LibraryDb db;
     private LearningModel model;
@@ -246,17 +242,7 @@ public final class MainActivity extends Activity {
         }
     }
     private void parseChat(String text){
-        Map<String,StringBuilder> bySender=new LinkedHashMap<>();
-        String current=null;
-        for(String line:text.split("\\r?\\n",-1)){
-            Matcher item=WHATSAPP_LINE.matcher(line);
-            if(item.matches()){
-                current=item.group(1).trim();
-                bySender.computeIfAbsent(current,k->new StringBuilder()).append(item.group(2)).append('\n');
-            }else if(current!=null){
-                bySender.get(current).append(line).append('\n');
-            }
-        }
+        Map<String,StringBuilder> bySender=WhatsAppParser.bySender(text);
         if(bySender.isEmpty()){toast("لم يُعثر على مرسلين في الملف. استخدم لصق النص بدلاً من ذلك.");return;}
         String[] names=bySender.keySet().toArray(new String[0]);
         new AlertDialog.Builder(this).setTitle("أي اسم هو أنت؟")
