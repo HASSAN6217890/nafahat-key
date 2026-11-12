@@ -48,6 +48,12 @@ public final class LibraryDb extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("name",cleaned);
         return db.insertOrThrow("collections",null,v);
     }
+    private String safePersonalGroup(String name){
+        String group=name==null||name.trim().isEmpty()?"شخصية":name.trim();
+        if(group.equals("معلومات نفحات")||group.equals("ردود جاهزة"))
+            return "شخصية – "+group;
+        return group;
+    }
     private void insertSnippet(SQLiteDatabase db,String id,String title,String body,String group,String type,boolean pinned){
         long col=collectionId(db,group,true);
         ContentValues v=new ContentValues();
@@ -75,7 +81,7 @@ public final class LibraryDb extends SQLiteOpenHelper {
                 String group=entry.optString("category","شخصية");
                 if(title.trim().isEmpty()||body.trim().isEmpty())throw new JSONException("Empty legacy record");
                 try(Cursor cur=db.rawQuery("SELECT id FROM snippets WHERE id=?",new String[]{id})){
-                    if(!cur.moveToFirst())insertSnippet(db,id,title,body,group,"رد",false);
+                    if(!cur.moveToFirst())insertSnippet(db,id,title,body,safePersonalGroup(group),"رد",false);
                 }
             }
             db.setTransactionSuccessful();
@@ -118,7 +124,7 @@ public final class LibraryDb extends SQLiteOpenHelper {
         try{backupBeforeWrite();}catch(Exception e){throw new IllegalStateException("تعذّر إنشاء النسخة الاحتياطية",e);}
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{
-            insertSnippet(db,UUID.randomUUID().toString(),title.trim(),body.trim(),collection,type,false);
+            insertSnippet(db,UUID.randomUUID().toString(),title.trim(),body.trim(),safePersonalGroup(collection),type,false);
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
@@ -142,7 +148,7 @@ public final class LibraryDb extends SQLiteOpenHelper {
         try{backupBeforeWrite();}catch(Exception e){throw new IllegalStateException(e);}
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{
-            long col=collectionId(db,collection,true);
+            long col=collectionId(db,safePersonalGroup(collection),true);
             ContentValues values=new ContentValues();
             values.put("collection_id",col);values.put("title",title.trim());
             values.put("body",body.trim());values.put("type",type);
@@ -217,7 +223,7 @@ public final class LibraryDb extends SQLiteOpenHelper {
                     if(c.moveToFirst())id=UUID.randomUUID().toString();
                 }
                 insertSnippet(db,id,o.getString("title"),o.getString("body"),
-                    o.getString("collection"),o.optString("type","رد"),o.optInt("pinned")==1);
+                    safePersonalGroup(o.getString("collection")),o.optString("type","رد"),o.optInt("pinned")==1);
             }
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
