@@ -13,7 +13,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,7 +61,7 @@ public final class LibraryDb extends SQLiteOpenHelper {
     }
 
     static boolean copy(File from, File to) {
-        try (InputStream in = new FileInputStream(from); OutputStream out = new FileOutputStream(to)) {
+        try (InputStream in = new FileInputStream(from); FileOutputStream out = new FileOutputStream(to)) {
             byte[] buf = new byte[16384];
             int n;
             while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
