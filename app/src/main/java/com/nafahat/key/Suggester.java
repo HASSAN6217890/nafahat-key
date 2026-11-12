@@ -113,11 +113,11 @@ public final class Suggester {
     /** Invalidates pending asynchronous requests. */
     public void cancel() { seq.incrementAndGet(); }
 
-    /** Synchronous result for the separator path (uses the cached result when it matches). */
-    public Result now(String typed, boolean arabic, boolean allowCorrection) {
+    /** Cached result for exactly this word, or null. Never scans the dictionary (main-thread safe). */
+    public Result cached(String typed, boolean arabic) {
         Result r = last;
         if (r != null && r.typed.equals(typed) && r.arabic == arabic) return r;
-        return compute(typed, arabic, allowCorrection);
+        return null;
     }
 
     Result compute(String typed, boolean arabic, boolean allowCorrection) {
@@ -140,41 +140,42 @@ public final class Suggester {
         int exact = dict != null ? dict.exactIndex(typed) : -1;
         res.typedKnown = exact >= 0 || user.count(typed) >= 1;
         boolean userKnown = user.isKnown(typed);
-        if (allowCorrection && dict != null && exact >= 0 && !userKnown && typed.length() >= 2) {
-            // A listed but rare spelling next to a much more common one ("الى" → "إلى", "teh" → "the").
-            float typedZipf = dict.zipf(exact);
-            int variant = dict.findNorm(norm);
-            if (variant >= 0 && variant != exact && dict.zipf(variant) - typedZipf >= 0.85f) {
-                res.autoCorrect = fixCase(typed, dict.word(variant), arabic);
-            } else if (typedZipf < 3.5f && norm.length() >= 3) {
-                for (Dictionary.Candidate c : dict.correct(norm, 1.0f, 3)) {
-                    float z = c.score + 2.2f * c.cost;
-                    if (c.cost > 0f && z - typedZipf >= 2.5f) { res.autoCorrect = fixCase(typed, c.word, arabic); break; }
-                }
-            }
-        }
         boolean known = exact >= 0 || userKnown;
-        if (allowCorrection && dict != null && !known && typed.length() >= 2) {
-            int variant = dict.findNorm(norm);
-            if (variant >= 0 && !dict.word(variant).equals(typed)) {
-                // Same letters, different hamza / ta marbuta / alef maqsura form.
-                res.autoCorrect = dict.word(variant);
-            } else if (variant < 0) {
+        if (arabic) {
+            if (allowCorrection && dict != null) res.autoCorrect = AutoCorrect.arabic(dict, typed, user::isKnown);
+            // Suggest (never auto-replace) close words for unknown, non-clitic words.
+            if (dict != null && !known && res.autoCorrect == null && norm.length() >= 3
+                && dict.findNorm(norm) < 0 && !AutoCorrect.cliticKnown(dict, norm)) {
+                float maxCost = norm.length() <= 4 ? 1.0f : 1.6f;
+                for (Dictionary.Candidate c : dict.correct(norm, maxCost, 3))
+                    Dictionary.insert(cands, new Dictionary.Candidate(c.word, c.cost, c.score - 0.3f), 6);
+            }
+        } else if (allowCorrection && dict != null && typed.length() >= 2) {
+            boolean allCaps = typed.length() > 1 && typed.equals(typed.toUpperCase(Locale.US));
+            if (exact >= 0 && !userKnown) {
+                // A listed but rare spelling next to a much more common one ("teh" → "the").
+                float typedZipf = dict.zipf(exact);
+                if (typedZipf < 3.5f && norm.length() >= 3 && !allCaps) {
+                    for (Dictionary.Candidate c : dict.correct(norm, 1.0f, 3)) {
+                        float z = c.score + 2.2f * c.cost;
+                        if (c.cost > 0f && z - typedZipf >= 2.5f) { res.autoCorrect = c.word; break; }
+                    }
+                }
+            } else if (!known) {
                 int L = norm.length();
                 float maxCost = L <= 4 ? 1.0f : L <= 7 ? 1.6f : 2.0f;
                 List<Dictionary.Candidate> corr = dict.correct(norm, maxCost, 4);
                 for (Dictionary.Candidate c : corr)
                     Dictionary.insert(cands, new Dictionary.Candidate(c.word, c.cost, c.score - 0.3f), 6);
-                if (!corr.isEmpty() && L >= 3) {
+                if (!corr.isEmpty() && L >= 3 && !allCaps) {
                     Dictionary.Candidate best = corr.get(0);
                     Dictionary.Candidate second = corr.size() > 1 ? corr.get(1) : null;
-                    boolean frequent = best.score + 2.2f * best.cost >= 2.5f;
+                    boolean frequent = best.score + 2.2f * best.cost >= 3.0f;
                     boolean clear = second == null || best.score - second.score >= 0.4f || best.cost < second.cost;
-                    boolean allCaps = !arabic && typed.length() > 1 && typed.equals(typed.toUpperCase(Locale.US));
-                    if (frequent && clear && !allCaps) res.autoCorrect = best.word;
+                    if (frequent && clear) res.autoCorrect = best.word;
                 }
             }
-            if (res.autoCorrect != null) res.autoCorrect = fixCase(typed, res.autoCorrect, arabic);
+            if (res.autoCorrect != null) res.autoCorrect = fixCase(typed, res.autoCorrect, false);
         }
         for (Dictionary.Candidate c : cands) {
             String w = fixCase(typed, c.word, arabic);
