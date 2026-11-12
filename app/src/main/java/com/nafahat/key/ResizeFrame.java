@@ -53,13 +53,13 @@ public final class ResizeFrame extends View {
     public void setListener(Listener l) { listener = l; }
     public void setTheme(Theme t) { theme = t; invalidate(); }
 
-    /** Area of the keys in this view's coordinates. */
-    public void setArea(RectF r) {
-        area.set(r);
-        invalidate();
-    }
+    private KeyboardView source;
+
+    /** The keyboard whose key area the frame surrounds (same position and size as this view). */
+    public void setSource(KeyboardView kv) { source = kv; }
 
     @Override protected void onDraw(Canvas c) {
+        if (source != null) area.set(source.areaRect());
         c.drawColor((theme.background & 0x00FFFFFF) | 0x8C000000);
         float r = 10 * density;
         frame.setColor(Theme.GOLD);
