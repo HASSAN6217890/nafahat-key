@@ -3,415 +3,565 @@ package com.nafahat.key;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.inputmethodservice.InputMethodService;
-import android.os.Handler;
-import android.os.Looper;
-import android.text.InputType;
-import android.text.TextUtils;
-import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
+import android.os.SystemClock;
 import android.view.KeyEvent;
-import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
-import android.widget.Button;
-import android.widget.HorizontalScrollView;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
-import android.widget.PopupWindow;
-import android.widget.ScrollView;
-import android.widget.TextView;
 import android.widget.Toast;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** Local-only Android IME: no logging, permissions, networking or automatic clipboard reads. */
-public final class NafahatKeyboardService extends InputMethodService {
-    private enum Mode { LETTERS, SYMBOLS, DIACRITICS, LIBRARY }
-    private Mode mode = Mode.LETTERS;
-    private boolean arabic = true, shift = false, sensitive = false;
-    private String category = "معلومات نفحات";
-    private LinearLayout root;
-    private KeyboardPrefs preferences;
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private Runnable deletionTask;
-    private boolean didRepeat;
-    private PopupWindow preview;
+/** Local-only Android IME: no logging, no network, no clipboard reads unless the user asks. */
+public final class NafahatKeyboardService extends InputMethodService implements KeyboardView.Listener,
+    CandidateStrip.Listener, GridPanel.Listener, LibraryPanel.Host, InputHandler.Ui {
+
+    private static final int PANEL_KEYS = 0, PANEL_MENU = 1, PANEL_THEME = 2, PANEL_ONE_HAND = 3,
+        PANEL_EDIT = 4, PANEL_LIBRARY = 5, PANEL_MORE = 6;
+
+    private static final int C_LIBRARY = 1, C_THEME = 2, C_RESIZE = 3, C_ONE_HAND = 4, C_EDIT = 5,
+        C_DIACRITICS = 6, C_LANGUAGE = 7, C_UNDO = 8, C_SETTINGS = 9;
+    private static final int C_BACK = 10;
+    private static final int C_T_NAFAHAT = 21, C_T_DARK = 22, C_T_LIGHT = 23, C_T_SYSTEM = 24;
+    private static final int C_H_LEFT = 31, C_H_RIGHT = 32, C_H_OFF = 33;
+    private static final int C_E_LEFT = 41, C_E_RIGHT = 42, C_E_UP = 43, C_E_DOWN = 44, C_E_SELECT = 45,
+        C_E_ALL = 46, C_E_COPY = 47, C_E_CUT = 48, C_E_PASTE = 49, C_E_HOME = 50, C_E_END = 51, C_E_DEL = 52;
+    private static final int C_MORE_WORD = 60;
+
+    private KeyboardPrefs prefs;
+    private InputHandler handler;
+    private Theme theme;
+    private final ExecutorService bg = Executors.newSingleThreadExecutor();
+
+    private FrameLayout root;
+    private View spacer;
+    private CandidateStrip strip;
+    private FrameLayout content;
+    private KeyboardView keyboard;
+    private GridPanel grid;
+    private LibraryPanel library;
+    private PreviewOverlay overlay;
+
+    private int panel = PANEL_KEYS;
+    private int symbolsPage;      // 0 letters, 1 or 2 symbols
+    private boolean diacriticsPage;
+    private boolean resizing;
+    private boolean selecting;
+    private boolean numberRowCached;
+    private final Map<String, Layout> layouts = new HashMap<>();
+    private final int[] loc = new int[2];
+
+    // ------------------------------------------------------------------ lifecycle
+    @Override public void onCreate() {
+        super.onCreate();
+        prefs = new KeyboardPrefs(this);
+        handler = new InputHandler(this, this);
+        handler.setArabic(prefs.arabic());
+        Suggester.get(this).ensureLoaded();
+        bg.execute(() -> LibraryDb.get(getApplicationContext()));
+    }
+
+    @Override public void onDestroy() {
+        bg.shutdown();
+        super.onDestroy();
+    }
+
+    @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public View onCreateInputView() {
-        preferences = new KeyboardPrefs(this);
-        root = UiKit.vertical(this);
+        float d = getResources().getDisplayMetrics().density;
+        root = new FrameLayout(this);
         root.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        rebuild();
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        spacer = new View(this);
+        spacer.setBackgroundColor(Color.TRANSPARENT);
+        column.addView(spacer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.round(28 * d)));
+        strip = new CandidateStrip(this);
+        strip.setListener(this);
+        column.addView(strip, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content = new FrameLayout(this);
+        keyboard = new KeyboardView(this);
+        keyboard.setListener(this);
+        grid = new GridPanel(this);
+        grid.setListener(this);
+        library = new LibraryPanel(this);
+        library.setHost(this);
+        content.addView(keyboard, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(library, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        column.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(column, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        overlay = new PreviewOverlay(this);
+        root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        keyboard.setOverlay(overlay);
+        layouts.clear();
+        applyPrefs();
+        showPanel(PANEL_KEYS);
         return root;
     }
-    @Override public void onStartInput(EditorInfo info,boolean restarting) {
-        super.onStartInput(info,restarting);
-        mode=Mode.LETTERS; shift=false; sensitive=isSensitive(info);
-        if(root!=null) rebuild();
-    }
-    @Override public void onStartInputView(EditorInfo info,boolean restarting) {
-        super.onStartInputView(info,restarting);
-        sensitive=isSensitive(info);
-        if(root!=null) rebuild();
-    }
-    @Override public void onFinishInputView(boolean finishingInput) {
-        stopDelete(); hidePreview(); super.onFinishInputView(finishingInput);
-    }
-    @Override public void onDestroy() {
-        stopDelete(); hidePreview(); super.onDestroy();
-    }
-    private boolean isSensitive(EditorInfo editor) {
-        if(editor==null)return false;
-        int cls=editor.inputType & InputType.TYPE_MASK_CLASS;
-        int variation=editor.inputType & InputType.TYPE_MASK_VARIATION;
-        if(cls==InputType.TYPE_CLASS_TEXT)
-            return variation==InputType.TYPE_TEXT_VARIATION_PASSWORD
-                || variation==InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
-                || variation==InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
-        return cls==InputType.TYPE_CLASS_NUMBER && variation==InputType.TYPE_NUMBER_VARIATION_PASSWORD;
-    }
-    private void rebuild() {
-        if(root==null)return;
-        preferences = new KeyboardPrefs(this);
-        hidePreview();
-        root.removeAllViews();
-        root.setBackgroundColor(preferences.background());
-        UiKit.pad(root,this,3,3);
-        addToolbar();
-        if(mode==Mode.LIBRARY && !sensitive) addLibrary();
-        else if(mode==Mode.SYMBOLS) addSymbols();
-        else if(mode==Mode.DIACRITICS && arabic) addDiacritics();
-        else addLetters();
-    }
-    private void addToolbar() {
-        LinearLayout row=UiKit.horizontal(this);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        root.addView(row,new LinearLayout.LayoutParams(-1,UiKit.dp(this,37)));
-        if(!sensitive) addToolbarButton(row,"▤  الحافظة",3f,()->{
-            mode=mode==Mode.LIBRARY?Mode.LETTERS:Mode.LIBRARY;rebuild();
-        });
-        addToolbarButton(row,"⚙  الإعدادات",2f,()->{
-            android.content.Intent intent=new android.content.Intent(this,MainActivity.class);
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        });
-    }
-    private void addToolbarButton(LinearLayout row,String label,float weight,Runnable action) {
-        Button button=makeKey(label,true);
-        button.setTextSize(13);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,UiKit.dp(this,33),weight);
-        lp.setMargins(UiKit.dp(this,2),0,UiKit.dp(this,2),0);
-        row.addView(button,lp);
-        button.setOnClickListener(v->action.run());
-    }
-    private void addLetters() {
-        if(preferences.numberRow()) addNumberRow();
-        if(arabic) {
-            addRow(new String[]{"ض","ص","ث","ق","ف","غ","ع","ه","خ","ح","ج"},47);
-            addRow(new String[]{"ش","س","ي","ب","ل","ا","ت","ن","م","ك","ط"},47);
-            addRow(new String[]{"ذ","ء","ؤ","ر","ى","ة","و","ز","ظ","د","⌫"},47);
-            addSpaceRow(new String[]{"123","EN","◌","،","المسافة",".","↵"},52);
-        } else {
-            addRow(new String[]{"q","w","e","r","t","y","u","i","o","p"},47);
-            addRow(new String[]{"a","s","d","f","g","h","j","k","l"},47);
-            addRow(new String[]{"⇧","z","x","c","v","b","n","m","⌫"},47);
-            addSpaceRow(new String[]{"123","عربي",",","space",".","↵"},52);
-        }
-    }
-    private void addNumberRow() {
-        LinearLayout row=UiKit.horizontal(this);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        root.addView(row,new LinearLayout.LayoutParams(-1,UiKit.dp(this,preferences.scaled(34))));
-        for(String digit:new String[]{"1","2","3","4","5","6","7","8","9","0"})
-            addKeyToRow(row,digit,1f,preferences.scaled(32));
-    }
-    private void addRow(String[] keys,int heightDp) {
-        int height=preferences.scaled(heightDp);
-        LinearLayout row=UiKit.horizontal(this);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        root.addView(row,new LinearLayout.LayoutParams(-1,UiKit.dp(this,height)));
-        for(String key:keys)addKeyToRow(row,key,1f,height-3);
-    }
-    private void addSpaceRow(String[] keys,int heightDp) {
-        int height=preferences.scaled(heightDp);
-        LinearLayout row=UiKit.horizontal(this);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        root.addView(row,new LinearLayout.LayoutParams(-1,UiKit.dp(this,height)));
-        for(String key:keys)
-            addKeyToRow(row,key,(key.equals("المسافة") || key.equals("space"))?3.7f:
-                key.equals("↵")?1.12f:1f,height-3);
-    }
-    private void addKeyToRow(LinearLayout row,String key,float weight,int height) {
-        boolean special=key.equals("⇧")||key.equals("⌫")||key.equals("123")
-            ||key.equals("↵")||key.equals("EN")||key.equals("عربي")
-            ||key.equals("ABC")||key.equals("حروف")||key.equals("◌");
-        Button b=makeKey(key,special);
-        b.setTextSize(key.length()>4?13:preferences.fontSize());
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,UiKit.dp(this,height),weight);
-        lp.setMargins(UiKit.dp(this,1),UiKit.dp(this,2),UiKit.dp(this,1),0);
-        row.addView(b,lp);
-        if(key.equals("⌫")) { installBackspace(b); return; }
-        if(key.equals("المسافة")||key.equals("space")) {installSpaceGestures(b);return;}
-        String[] alternatives=alternatives(key);
-        if(alternatives!=null) {
-            b.setOnLongClickListener(v->{
-                hidePreview();
-                PopupMenu menu=new PopupMenu(this,b);
-                for(String option:alternatives)menu.getMenu().add(option);
-                menu.setOnMenuItemClickListener(item->{commit(item.getTitle().toString());return true;});
-                menu.show();
-                return true;
-            });
-        }
-        if(key.length()<=2 && !special) attachPreview(b,key);
-        b.setOnClickListener(v->{keyPressed(key);feedback(b);});
-    }
-    private String[] alternatives(String key) {
-        if(!arabic || mode!=Mode.LETTERS) return null;
-        switch(key) {
-            case "ا": return new String[]{"أ","إ","آ","ٱ"};
-            case "ي": return new String[]{"ئ","ى"};
-            case "ل": return new String[]{"لا","لأ","لإ","لآ"};
-            case "و": return new String[]{"ؤ"};
-            case "ه": return new String[]{"ة"};
-            case "ء": return new String[]{"أ","إ","ئ","ؤ"};
-            case "ى": return new String[]{"ي"};
-            case "ة": return new String[]{"ه"};
-            default: return null;
-        }
-    }
-    private Button makeKey(String label,boolean special) {
-        Button b=new Button(this);
-        b.setAllCaps(false);
-        b.setGravity(Gravity.CENTER);
-        b.setText(label);
-        b.setTextColor(preferences.textColor());
-        b.setTypeface(Typeface.DEFAULT,special?Typeface.BOLD:Typeface.NORMAL);
-        b.setBackground(UiKit.rounded(special?preferences.specialColor():preferences.keyColor(),6,this));
-        b.setMinHeight(0);b.setMinimumHeight(0);b.setMinWidth(0);b.setMinimumWidth(0);
-        b.setPadding(0,0,0,0);
-        b.setHapticFeedbackEnabled(true);
-        return b;
-    }
-    private void attachPreview(Button btn,String label) {
-        btn.setOnTouchListener((v,e)->{
-            switch(e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN: showPreview(btn,label); return false;
-                case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL:
-                    hidePreview();return false;
-                default:return false;
-            }
-        });
-    }
-    private void showPreview(Button anchor,String text) {
-        hidePreview();
-        TextView tv=new TextView(this);
-        tv.setText(text);tv.setTextSize(Math.max(24,preferences.fontSize()+6));
-        tv.setTextColor(preferences.textColor());
-        tv.setGravity(Gravity.CENTER);
-        tv.setBackground(UiKit.rounded(preferences.keyColor(),8,this));
-        int w=UiKit.dp(this,53),h=UiKit.dp(this,56);
-        preview=new PopupWindow(tv,w,h,false);
-        preview.setBackgroundDrawable(UiKit.rounded(preferences.keyColor(),8,this));
-        int[] xy=new int[2];anchor.getLocationOnScreen(xy);
-        try {
-            preview.showAtLocation(anchor,Gravity.TOP|Gravity.LEFT,
-                xy[0]+(anchor.getWidth()-w)/2,Math.max(0,xy[1]-h-UiKit.dp(this,4)));
-        } catch(RuntimeException e) { hidePreview(); } // IME window tokens may differ by device
-    }
-    private void hidePreview() {
-        if(preview!=null) {if(preview.isShowing())preview.dismiss();preview=null;}
-    }
-    private void feedback(View view) {
-        if(preferences.vibrate())view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-    }
-    private void keyPressed(String key) {
-        switch(key) {
-            case "123":mode=Mode.SYMBOLS;rebuild();return;
-            case "ABC":case "حروف":mode=Mode.LETTERS;rebuild();return;
-            case "◌":mode=Mode.DIACRITICS;rebuild();return;
-            case "EN":arabic=false;shift=false;mode=Mode.LETTERS;rebuild();return;
-            case "عربي":arabic=true;shift=false;mode=Mode.LETTERS;rebuild();return;
-            case "⇧":shift=!shift;rebuild();return;
-            case "↵":enter();return;
-            case "⌫":deleteOne();return;
-            case "المسافة":case "space":commit(" ");return;
-            default:
-                String out=key;
-                if(!arabic && mode==Mode.LETTERS && shift)out=out.toUpperCase(Locale.US);
-                commit(out);
-                if(shift && !arabic){shift=false;rebuild();}
-        }
-    }
-    private void commit(String text) {
-        InputConnection ic=getCurrentInputConnection();
-        if(ic!=null)ic.commitText(text,1);
-    }
-    private void deleteOne() {
-        InputConnection ic=getCurrentInputConnection();
-        if(ic!=null) {
-            CharSequence selected=ic.getSelectedText(0);
-            if(selected!=null && selected.length()>0)ic.commitText("",1);
-            else ic.deleteSurroundingTextInCodePoints(1,0);
-        }
-    }
-    private void enter() {
-        InputConnection ic=getCurrentInputConnection();if(ic==null)return;
-        EditorInfo info=getCurrentInputEditorInfo();
-        int action=info==null?EditorInfo.IME_ACTION_NONE:info.imeOptions & EditorInfo.IME_MASK_ACTION;
-        if(action!=EditorInfo.IME_ACTION_NONE && action!=EditorInfo.IME_ACTION_UNSPECIFIED)
-            ic.performEditorAction(action);
-        else sendKeyPair(ic,KeyEvent.KEYCODE_ENTER);
-    }
-    private void sendKeyPair(InputConnection ic,int keyCode) {
-        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,keyCode));
-        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,keyCode));
-    }
-    private void stopDelete() {
-        if(deletionTask!=null)handler.removeCallbacks(deletionTask);deletionTask=null;
-    }
-    private void installBackspace(Button btn) {
-        btn.setOnTouchListener((v,e)->{
-            switch(e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    stopDelete();didRepeat=false;feedback(btn);
-                    deletionTask=new Runnable() {@Override public void run(){
-                        didRepeat=true;deleteOne();handler.postDelayed(this,75);
-                    }};
-                    handler.postDelayed(deletionTask,430);return true;
-                case MotionEvent.ACTION_UP:
-                    stopDelete();if(!didRepeat)deleteOne();return true;
-                case MotionEvent.ACTION_CANCEL:stopDelete();return true;
-                default:return true;
-            }
-        });
-    }
-    private void installSpaceGestures(Button btn) {
-        btn.setOnTouchListener(new View.OnTouchListener() {
-            float downX;int steps;boolean swiped;
-            @Override public boolean onTouch(View v,MotionEvent e) {
-                int action=e.getActionMasked();
-                if(action==MotionEvent.ACTION_DOWN){
-                    downX=e.getX();steps=0;swiped=false;feedback(btn);return true;
-                }
-                if(action==MotionEvent.ACTION_MOVE){
-                    int desired=(int)((e.getX()-downX)/UiKit.dp(NafahatKeyboardService.this,18));
-                    desired=Math.max(-30,Math.min(30,desired));
-                    if(desired!=0)swiped=true;
-                    InputConnection ic=getCurrentInputConnection();
-                    if(ic!=null){
-                        while(steps<desired){sendKeyPair(ic,KeyEvent.KEYCODE_DPAD_RIGHT);steps++;}
-                        while(steps>desired){sendKeyPair(ic,KeyEvent.KEYCODE_DPAD_LEFT);steps--;}
-                    }
-                    return true;
-                }
-                if(action==MotionEvent.ACTION_UP){if(!swiped)commit(" ");return true;}
-                return true;
-            }
-        });
-    }
-    private void addSymbols() {
-        LinearLayout split=UiKit.horizontal(this);
-        split.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        root.addView(split,new LinearLayout.LayoutParams(-1,UiKit.dp(this,preferences.scaled(200))));
-        LinearLayout left=UiKit.vertical(this),right=UiKit.vertical(this);
-        split.addView(left,new LinearLayout.LayoutParams(0,-1,5.2f));
-        split.addView(right,new LinearLayout.LayoutParams(0,-1,3.1f));
-        String[][] symbols={{"#","&","-","_","?"},{"@","(",")","=","+"},
-            {"{","}","/","%","⌫"},{"ABC","\"",":","*","!"}};
-        String[][] digits={{"1","2","3"},{"4","5","6"},{"7","8","9"},{"،","0","↵"}};
-        for(String[] row:symbols)addGridRow(left,row);
-        for(String[] row:digits)addGridRow(right,row);
-        addSpaceRow(new String[]{"ABC",arabic?"EN":"عربي","،","المسافة",".","↵"},52);
-    }
-    private void addDiacritics() {
-        addRow(new String[]{"َ","ً","ُ","ٌ"},52);
-        addRow(new String[]{"ِ","ٍ","ّ","ْ"},52);
-        addRow(new String[]{"أ","إ","آ","ـ"},52);
-        addSpaceRow(new String[]{"حروف","123","المسافة","↵"},52);
-    }
-    private void addGridRow(LinearLayout parent,String[] keys) {
-        LinearLayout row=UiKit.horizontal(this);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        parent.addView(row,new LinearLayout.LayoutParams(-1,0,1));
-        for(String key:keys)addKeyToRow(row,key,1f,preferences.scaled(46));
-    }
-    private void addLibrary() {
-        HorizontalScrollView tabs=new HorizontalScrollView(this);
-        tabs.setHorizontalScrollBarEnabled(false);
-        root.addView(tabs,new LinearLayout.LayoutParams(-1,UiKit.dp(this,43)));
-        LinearLayout nav=UiKit.horizontal(this);
-        nav.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        tabs.addView(nav);
-        List<Snippet> personal=new SnippetStore(this).getPersonal();
-        List<String> names=new ArrayList<>();
-        names.add("معلومات نفحات");names.add("ردود جاهزة");names.add("شخصية");
-        for(Snippet item:personal)if(!names.contains(item.category))names.add(item.category);
-        for(String name:names)addCategory(nav,name);
 
-        ScrollView scroll=new ScrollView(this);
-        root.addView(scroll,new LinearLayout.LayoutParams(-1,UiKit.dp(this,preferences.scaled(201))));
-        LinearLayout list=UiKit.vertical(this);
-        list.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        scroll.addView(list);
-        boolean official=category.equals("معلومات نفحات") || category.equals("ردود جاهزة");
-        List<Snippet> items=official?BrandData.publicSnippets():personal;
-        int count=0;
-        for(Snippet item:items) {
-            if(!item.category.equals(category))continue;
-            count++;
-            LinearLayout card=UiKit.vertical(this);
-            card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-            card.setBackground(UiKit.rounded(preferences.keyColor(),8,this));
-            UiKit.pad(card,this,11,7);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-            lp.setMargins(UiKit.dp(this,4),UiKit.dp(this,3),UiKit.dp(this,4),UiKit.dp(this,2));
-            list.addView(card,lp);
-            TextView title=new TextView(this);
-            title.setText(item.title);title.setTextSize(14);
-            title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-            title.setTextColor(preferences.textColor());title.setGravity(Gravity.RIGHT);
-            card.addView(title,new LinearLayout.LayoutParams(-1,-2));
-            TextView excerpt=new TextView(this);
-            excerpt.setText(item.text);excerpt.setTextSize(12);
-            excerpt.setTextColor(preferences.textColor());
-            excerpt.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
-            excerpt.setMaxLines(2);excerpt.setEllipsize(TextUtils.TruncateAt.END);
-            excerpt.setGravity(Gravity.RIGHT);
-            card.addView(excerpt,new LinearLayout.LayoutParams(-1,-2));
-            card.setContentDescription(item.title+"، "+item.text);
-            card.setOnClickListener(v->{commit(item.text);mode=Mode.LETTERS;rebuild();});
-            card.setOnLongClickListener(v->{
-                ClipboardManager mgr=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
-                if(mgr!=null)mgr.setPrimaryClip(ClipData.newPlainText(item.title,item.text));
-                Toast.makeText(this,"تم النسخ",Toast.LENGTH_SHORT).show();return true;
-            });
-        }
-        if(count==0) {
-            TextView empty=new TextView(this);
-            empty.setText("لا توجد نصوص في هذا التبويب.");empty.setTextSize(13);
-            empty.setTextColor(preferences.textColor());empty.setGravity(Gravity.CENTER);
-            list.addView(empty,new LinearLayout.LayoutParams(-1,UiKit.dp(this,70)));
-        }
-        Button back=makeKey("العودة إلى الحروف",true);
-        root.addView(back,new LinearLayout.LayoutParams(-1,UiKit.dp(this,40)));
-        back.setOnClickListener(v->{mode=Mode.LETTERS;rebuild();});
+    @Override public void onStartInput(EditorInfo attribute, boolean restarting) {
+        super.onStartInput(attribute, restarting);
+        handler.startInput(attribute, restarting);
     }
-    private void addCategory(LinearLayout nav,String name) {
-        Button b=makeKey(name,true);
-        b.setTextSize(12);
-        if(category.equals(name)){
-            b.setBackground(UiKit.rounded(preferences.highlightColor(),8,this));
-            b.setTextColor(Color.WHITE);
+
+    @Override public void onStartInputView(EditorInfo info, boolean restarting) {
+        super.onStartInputView(info, restarting);
+        if (root == null) return;
+        resizing = false;
+        selecting = false;
+        symbolsPage = 0;
+        diacriticsPage = false;
+        applyPrefs();
+        handler.setPrefs(prefs);
+        handler.setArabic(prefs.arabic());
+        if (!restarting || panel == PANEL_LIBRARY) showPanel(PANEL_KEYS);
+        applyLayout(false);
+        keyboard.setPreviewEnabled(!handler.isSensitive());
+        keyboard.setEnterAction(handler.enterAction());
+        keyboard.setShift(handler.shifted(), false);
+        handler.startInputView();
+    }
+
+    @Override public void onFinishInputView(boolean finishingInput) {
+        if (keyboard != null) keyboard.cancelAllPointers();
+        super.onFinishInputView(finishingInput);
+    }
+
+    @Override public void onFinishInput() {
+        handler.finishInput();
+        super.onFinishInput();
+    }
+
+    @Override public void onUpdateSelection(int oldSelStart, int oldSelEnd, int newSelStart, int newSelEnd,
+                                            int candidatesStart, int candidatesEnd) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd);
+        handler.onUpdateSelection(newSelStart, newSelEnd, candidatesStart, candidatesEnd);
+    }
+
+    @Override public void onComputeInsets(Insets outInsets) {
+        super.onComputeInsets(outInsets);
+        if (strip == null || root == null || !root.isShown()) return;
+        strip.getLocationInWindow(loc);
+        int top = loc[1];
+        root.getLocationInWindow(loc);
+        int bottom = loc[1] + root.getHeight();
+        Window w = getWindow() != null ? getWindow().getWindow() : null;
+        if (w != null) bottom = Math.max(bottom, w.getDecorView().getHeight());
+        outInsets.contentTopInsets = top;
+        outInsets.visibleTopInsets = top;
+        outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION;
+        outInsets.touchableRegion.set(0, top, root.getWidth(), bottom);
+    }
+
+    // ------------------------------------------------------------------ preferences / layout
+    private void applyPrefs() {
+        theme = prefs.resolveTheme(this);
+        if (numberRowCached != prefs.numberRow()) { layouts.clear(); numberRowCached = prefs.numberRow(); }
+        int h = KeyboardView.computeHeight(this, layoutFor("ar"), prefs.heightPercent());
+        keyboard.setKeyboardHeight(h);
+        grid.setPanelHeight(h);
+        library.setPanelHeight(h);
+        keyboard.setTheme(theme);
+        keyboard.setFontPercent(prefs.fontPercent());
+        keyboard.setHaptics(prefs.vibrate(), prefs.vibrationLevel());
+        keyboard.setOneHanded(prefs.oneHanded());
+        strip.setTheme(theme);
+        grid.setTheme(theme);
+        library.setTheme(theme);
+        library.setPrefs(prefs);
+        overlay.setTheme(theme);
+        try {
+            Window w = getWindow() != null ? getWindow().getWindow() : null;
+            if (w != null) w.setNavigationBarColor(theme.background);
+        } catch (RuntimeException ignored) { }
+    }
+
+    private Layout layoutFor(String id) {
+        Layout l = layouts.get(id);
+        if (l != null) return l;
+        boolean num = prefs.numberRow();
+        switch (id) {
+            case "ar": l = Layouts.arabic(num); break;
+            case "en": l = Layouts.english(num, 0); break;
+            case "en_mail": l = Layouts.english(num, 1); break;
+            case "en_url": l = Layouts.english(num, 2); break;
+            case "sym1_ar": l = Layouts.symbols(1, true); break;
+            case "sym2_ar": l = Layouts.symbols(2, true); break;
+            case "sym1_en": l = Layouts.symbols(1, false); break;
+            case "sym2_en": l = Layouts.symbols(2, false); break;
+            case "diac": l = Layouts.diacritics(); break;
+            case "phone": l = Layouts.numberPad(true); break;
+            default: l = Layouts.numberPad(false);
         }
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(UiKit.dp(this,name.length()>10?124:86),UiKit.dp(this,38));
-        lp.setMargins(UiKit.dp(this,2),0,UiKit.dp(this,2),0);
-        nav.addView(b,lp);
-        b.setOnClickListener(v->{category=name;rebuild();});
+        layouts.put(id, l);
+        return l;
+    }
+
+    private String currentLayoutId() {
+        if (handler.isPhone()) return "phone";
+        if (handler.isNumeric()) return "number";
+        if (diacriticsPage) return "diac";
+        boolean ar = handler.arabic();
+        if (symbolsPage > 0) return "sym" + symbolsPage + (ar ? "_ar" : "_en");
+        if (handler.isEmail()) return "en_mail";
+        if (handler.isUrl()) return "en_url";
+        return ar ? "ar" : "en";
+    }
+
+    private void applyLayout(boolean animate) {
+        if (keyboard == null) return;
+        if ((handler.isEmail() || handler.isUrl()) && handler.arabic()) handler.setArabic(false);
+        keyboard.setLayout(layoutFor(currentLayoutId()), animate);
+        keyboard.setShift(handler.shifted(), false);
+    }
+
+    // ------------------------------------------------------------------ panels
+    private void showPanel(int p) {
+        panel = p;
+        keyboard.setVisibility(p == PANEL_KEYS ? View.VISIBLE : View.GONE);
+        grid.setVisibility(p == PANEL_MENU || p == PANEL_THEME || p == PANEL_ONE_HAND || p == PANEL_EDIT
+            || p == PANEL_MORE ? View.VISIBLE : View.GONE);
+        library.setVisibility(p == PANEL_LIBRARY ? View.VISIBLE : View.GONE);
+        strip.setMenuActive(p != PANEL_KEYS);
+        if (p != PANEL_KEYS) keyboard.cancelAllPointers();
+        switch (p) {
+            case PANEL_MENU: buildMenu(); break;
+            case PANEL_THEME: buildThemePanel(); break;
+            case PANEL_ONE_HAND: buildOneHandPanel(); break;
+            case PANEL_EDIT: buildEditPanel(); break;
+            case PANEL_MORE: buildMorePanel(); break;
+            case PANEL_LIBRARY: library.refresh(); break;
+            default:
+        }
+    }
+
+    private GridPanel.Cell cell(int id, String title, String glyph) { return new GridPanel.Cell(id, title, glyph); }
+
+    private void buildMenu() {
+        List<GridPanel.Cell> cells = new ArrayList<>();
+        GridPanel.Cell lib = cell(C_LIBRARY, "النصوص", "📋");
+        lib.enabled = !handler.isSensitive();
+        cells.add(lib);
+        cells.add(cell(C_THEME, "المظهر", "🎨"));
+        cells.add(cell(C_RESIZE, "تغيير الحجم", "↕"));
+        GridPanel.Cell one = cell(C_ONE_HAND, "بيد واحدة", "✋");
+        one.active = prefs.oneHanded() != 0;
+        cells.add(one);
+        cells.add(cell(C_EDIT, "تعديل النص", "✂"));
+        GridPanel.Cell diac = cell(C_DIACRITICS, "الحركات", "ـَ");
+        diac.active = diacriticsPage;
+        cells.add(diac);
+        cells.add(cell(C_LANGUAGE, handler.arabic() ? "English" : "العربية", "🌐"));
+        cells.add(cell(C_UNDO, "تراجع", "↶"));
+        cells.add(cell(C_SETTINGS, "الإعدادات", "⚙"));
+        grid.setCells(cells, 3, null);
+    }
+
+    private void buildThemePanel() {
+        List<GridPanel.Cell> cells = new ArrayList<>();
+        String t = prefs.theme();
+        GridPanel.Cell a = cell(C_T_NAFAHAT, "نفحات", null); a.active = t.equals("nafahat"); cells.add(a);
+        GridPanel.Cell b = cell(C_T_DARK, "داكن", null); b.active = t.equals("dark"); cells.add(b);
+        GridPanel.Cell c = cell(C_T_LIGHT, "فاتح", null); c.active = t.equals("light"); cells.add(c);
+        GridPanel.Cell s = cell(C_T_SYSTEM, "حسب نظام الهاتف", null); s.active = t.equals("system"); cells.add(s);
+        cells.add(cell(C_BACK, "رجوع", null));
+        grid.setCells(cells, 2, "المظهر");
+    }
+
+    private void buildOneHandPanel() {
+        List<GridPanel.Cell> cells = new ArrayList<>();
+        int m = prefs.oneHanded();
+        GridPanel.Cell r = cell(C_H_RIGHT, "اليد اليمنى", null); r.active = m == 2; cells.add(r);
+        GridPanel.Cell l = cell(C_H_LEFT, "اليد اليسرى", null); l.active = m == 1; cells.add(l);
+        GridPanel.Cell o = cell(C_H_OFF, "اللوحة كاملة", null); o.active = m == 0; cells.add(o);
+        cells.add(cell(C_BACK, "رجوع", null));
+        grid.setCells(cells, 2, "بيد واحدة");
+    }
+
+    private void buildEditPanel() {
+        List<GridPanel.Cell> cells = new ArrayList<>();
+        GridPanel.Cell up = cell(C_E_UP, "أعلى", "↑"); up.repeat = true;
+        GridPanel.Cell left = cell(C_E_LEFT, "يسار", "←"); left.repeat = true;
+        GridPanel.Cell right = cell(C_E_RIGHT, "يمين", "→"); right.repeat = true;
+        GridPanel.Cell down = cell(C_E_DOWN, "أسفل", "↓"); down.repeat = true;
+        GridPanel.Cell sel = cell(C_E_SELECT, "تحديد", null); sel.active = selecting;
+        GridPanel.Cell del = cell(C_E_DEL, "حذف", null); del.repeat = true;
+        // laid out right-to-left, four per row
+        cells.add(right); cells.add(up); cells.add(down); cells.add(left);
+        cells.add(cell(C_E_HOME, "البداية", null)); cells.add(sel); cells.add(cell(C_E_ALL, "تحديد الكل", null));
+        cells.add(cell(C_E_END, "النهاية", null));
+        cells.add(cell(C_E_COPY, "نسخ", null)); cells.add(cell(C_E_CUT, "قص", null));
+        cells.add(cell(C_E_PASTE, "لصق", null)); cells.add(del);
+        grid.setCells(cells, 4, "تعديل النص");
+    }
+
+    private void buildMorePanel() {
+        List<GridPanel.Cell> cells = new ArrayList<>();
+        for (String w : handler.moreSuggestions()) {
+            GridPanel.Cell c = cell(C_MORE_WORD, w, null);
+            c.data = w;
+            cells.add(c);
+            if (cells.size() >= 15) break;
+        }
+        grid.setCells(cells, 3, "اقتراحات أخرى");
+    }
+
+    // ------------------------------------------------------------------ KeyboardView.Listener
+    @Override public void onKey(Key key, String text) {
+        switch (key.type) {
+            case Key.CHAR: handler.onText(text); break;
+            case Key.SPACE: handler.onSpace(); break;
+            case Key.ENTER: handler.onEnter(); break;
+            case Key.SHIFT:
+                handler.onShift();
+                break;
+            case Key.TO_SYMBOLS:
+                symbolsPage = 1; diacriticsPage = false; applyLayout(true); break;
+            case Key.TO_LETTERS:
+                symbolsPage = 0; diacriticsPage = false; applyLayout(true); break;
+            case Key.SYM_PAGE:
+                symbolsPage = symbolsPage == 1 ? 2 : 1; applyLayout(true); break;
+            case Key.ONE_HAND_SWAP:
+                prefs.setOneHanded(prefs.oneHanded() == 1 ? 2 : 1);
+                keyboard.setOneHanded(prefs.oneHanded());
+                break;
+            case Key.ONE_HAND_EXIT:
+                prefs.setOneHanded(0);
+                keyboard.setOneHanded(0);
+                break;
+            default:
+        }
+    }
+
+    @Override public void onDelete(int repeat) { handler.onDelete(repeat); }
+
+    @Override public void onSpaceSwipe() { switchLanguage(); }
+
+    @Override public void onCursorMove(int steps) { handler.onCursorMove(steps); }
+
+    private void switchLanguage() {
+        if (handler.isEmail() || handler.isUrl() || handler.isNumeric() || handler.isPhone()) return;
+        boolean ar = !handler.arabic();
+        handler.setArabic(ar);
+        prefs.setArabic(ar);
+        symbolsPage = 0;
+        diacriticsPage = false;
+        applyLayout(true);
+    }
+
+    // ------------------------------------------------------------------ CandidateStrip.Listener
+    @Override public void onStripItem(CandidateStrip.Item item) {
+        handler.onStripItem(item);
+        if (panel == PANEL_MORE) showPanel(PANEL_KEYS);
+    }
+
+    @Override public void onMenuButton() {
+        if (resizing) { endResize(); return; }
+        if (handler.internalActive()) handler.endInternal(true);
+        showPanel(panel == PANEL_KEYS ? PANEL_MENU : PANEL_KEYS);
+    }
+
+    @Override public void onCollapseButton() {
+        if (resizing) { endResize(); return; }
+        if (panel != PANEL_KEYS) { showPanel(PANEL_KEYS); return; }
+        if (handler.moreSuggestions().size() > 3) { showPanel(PANEL_MORE); return; }
+        requestHideSelf(0);
+    }
+
+    // ------------------------------------------------------------------ GridPanel.Listener
+    @Override public void onCell(GridPanel.Cell c) {
+        InputConnection ic = getCurrentInputConnection();
+        switch (c.id) {
+            case C_LIBRARY: library.setQuery(""); showPanel(PANEL_LIBRARY); break;
+            case C_THEME: showPanel(PANEL_THEME); break;
+            case C_RESIZE: startResize(); break;
+            case C_ONE_HAND: showPanel(PANEL_ONE_HAND); break;
+            case C_EDIT: handler.finishComposingForEdit(); showPanel(PANEL_EDIT); break;
+            case C_DIACRITICS:
+                diacriticsPage = !diacriticsPage; symbolsPage = 0;
+                showPanel(PANEL_KEYS); applyLayout(true); break;
+            case C_LANGUAGE: showPanel(PANEL_KEYS); switchLanguage(); break;
+            case C_UNDO: showPanel(PANEL_KEYS); handler.undo(); break;
+            case C_SETTINGS: {
+                Intent i = new Intent(this, MainActivity.class);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                showPanel(PANEL_KEYS);
+                requestHideSelf(0);
+                startActivity(i);
+                break;
+            }
+            case C_BACK: showPanel(PANEL_MENU); break;
+            case C_T_NAFAHAT: setThemeId("nafahat"); break;
+            case C_T_DARK: setThemeId("dark"); break;
+            case C_T_LIGHT: setThemeId("light"); break;
+            case C_T_SYSTEM: setThemeId("system"); break;
+            case C_H_LEFT: prefs.setOneHanded(1); keyboard.setOneHanded(1); showPanel(PANEL_KEYS); break;
+            case C_H_RIGHT: prefs.setOneHanded(2); keyboard.setOneHanded(2); showPanel(PANEL_KEYS); break;
+            case C_H_OFF: prefs.setOneHanded(0); keyboard.setOneHanded(0); showPanel(PANEL_KEYS); break;
+            case C_E_LEFT: arrow(ic, KeyEvent.KEYCODE_DPAD_LEFT); break;
+            case C_E_RIGHT: arrow(ic, KeyEvent.KEYCODE_DPAD_RIGHT); break;
+            case C_E_UP: arrow(ic, KeyEvent.KEYCODE_DPAD_UP); break;
+            case C_E_DOWN: arrow(ic, KeyEvent.KEYCODE_DPAD_DOWN); break;
+            case C_E_HOME: arrow(ic, KeyEvent.KEYCODE_MOVE_HOME); break;
+            case C_E_END: arrow(ic, KeyEvent.KEYCODE_MOVE_END); break;
+            case C_E_SELECT: selecting = !selecting; buildEditPanel(); break;
+            case C_E_ALL: contextAction(ic, android.R.id.selectAll); break;
+            case C_E_COPY: contextAction(ic, android.R.id.copy); selecting = false; buildEditPanel(); break;
+            case C_E_CUT: contextAction(ic, android.R.id.cut); selecting = false; buildEditPanel(); break;
+            case C_E_PASTE: contextAction(ic, android.R.id.paste); break;
+            case C_E_DEL: handler.onDelete(0); break;
+            case C_MORE_WORD:
+                showPanel(PANEL_KEYS);
+                handler.pickWord((String) c.data, 1);
+                break;
+            default:
+        }
+    }
+
+    private void setThemeId(String id) {
+        prefs.setTheme(id);
+        applyPrefs();
+        buildThemePanel();
+        handler.updateStrip();
+    }
+
+    private void arrow(InputConnection ic, int code) {
+        if (ic == null) return;
+        handler.finishComposingForEdit();
+        long t = SystemClock.uptimeMillis();
+        int meta = selecting ? KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_LEFT_ON : 0;
+        ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, meta));
+        ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta));
+    }
+
+    private void contextAction(InputConnection ic, int id) {
+        if (ic == null) return;
+        handler.finishComposingForEdit();
+        ic.performContextMenuAction(id);
+    }
+
+    // ------------------------------------------------------------------ resize (live)
+    private void startResize() {
+        showPanel(PANEL_KEYS);
+        resizing = true;
+        showResizeStrip();
+    }
+
+    private void showResizeStrip() {
+        List<CandidateStrip.Item> items = new ArrayList<>();
+        CandidateStrip.Item smaller = new CandidateStrip.Item("−", CandidateStrip.ACTION, (Runnable) () -> resizeBy(-5));
+        CandidateStrip.Item info = new CandidateStrip.Item("الارتفاع " + prefs.heightPercent() + "%", CandidateStrip.INFO, null);
+        info.weight = 1.8f;
+        CandidateStrip.Item bigger = new CandidateStrip.Item("+", CandidateStrip.ACTION, (Runnable) () -> resizeBy(5));
+        CandidateStrip.Item reset = new CandidateStrip.Item("الافتراضي", CandidateStrip.ACTION, (Runnable) () -> {
+            prefs.setHeightPercent(100);
+            prefs.setFontPercent(100);
+            applyPrefs();
+            showResizeStrip();
+        });
+        CandidateStrip.Item done = new CandidateStrip.Item("تم", CandidateStrip.ACTION, (Runnable) this::endResize);
+        done.strong = true;
+        items.add(bigger); items.add(info); items.add(smaller); items.add(reset); items.add(done);
+        strip.setChips(items);
+    }
+
+    private void resizeBy(int delta) {
+        prefs.setHeightPercent(prefs.heightPercent() + delta);
+        prefs.setFontPercent(prefs.heightPercent());
+        applyPrefs();
+        showResizeStrip();
+    }
+
+    private void endResize() {
+        resizing = false;
+        handler.updateStrip();
+    }
+
+    // ------------------------------------------------------------------ LibraryPanel.Host
+    @Override public void insertSnippet(Snippet s) {
+        showPanel(PANEL_KEYS);
+        handler.insertSnippet(s);
+    }
+
+    @Override public void copySnippet(Snippet s) {
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null) cm.setPrimaryClip(ClipData.newPlainText(s.title, s.body));
+        Toast.makeText(this, "تم النسخ", Toast.LENGTH_SHORT).show();
+    }
+
+    @Override public void startLibrarySearch() {
+        String q = library.query();
+        showPanel(PANEL_KEYS);
+        handler.startSearch(q);
+    }
+
+    @Override public void saveClipboardTo(long collectionId) {
+        // Reads the clipboard only because the user pressed «حفظ المنسوخ».
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        CharSequence text = null;
+        try {
+            ClipData clip = cm == null ? null : cm.getPrimaryClip();
+            if (clip != null && clip.getItemCount() > 0) text = clip.getItemAt(0).coerceToText(this);
+        } catch (RuntimeException ignored) { }
+        if (text == null || text.toString().trim().isEmpty()) {
+            Toast.makeText(this, "لا يوجد نص منسوخ", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        LibraryDb db = LibraryDb.get(this);
+        long target = collectionId;
+        if (target >= 0) {
+            for (SnippetCollection c : db.collections(false)) if (c.id == target && c.isBuiltin()) target = -1;
+        }
+        if (target < 0) target = db.addCollection("نصوص محفوظة");
+        Snippet s = new Snippet();
+        String body = text.toString().trim();
+        s.collectionId = target;
+        s.body = body;
+        String firstLine = body.split("\n", 2)[0].trim();
+        s.title = firstLine.length() > 30 ? firstLine.substring(0, 30) + "…" : firstLine;
+        s.type = "أخرى";
+        db.saveSnippet(s);
+        Toast.makeText(this, "تم حفظ النص في المكتبة", Toast.LENGTH_SHORT).show();
+        library.refresh();
+    }
+
+    @Override public void togglePin(Snippet s) {
+        LibraryDb.get(this).setPinned(s.id, !s.pinned);
+        library.refresh();
+    }
+
+    // ------------------------------------------------------------------ InputHandler.Ui
+    @Override public InputConnection ic() { return getCurrentInputConnection(); }
+
+    @Override public void showStrip(List<CandidateStrip.Item> items, boolean chips) {
+        if (strip == null || resizing) return;
+        if (chips) strip.setChips(items);
+        else strip.setSuggestions(items, handler.arabic());
+    }
+
+    @Override public void showShift(boolean shifted, boolean locked) {
+        if (keyboard != null) keyboard.setShift(shifted, locked);
+    }
+
+    @Override public void openLibraryWithQuery(String query) {
+        library.setQuery(query);
+        showPanel(PANEL_LIBRARY);
+    }
+
+    @Override public void runOnBackground(Runnable r) {
+        try { bg.execute(r); } catch (RuntimeException ignored) { }
     }
 }
