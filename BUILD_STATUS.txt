@@ -1,7 +1,8 @@
-Project: NafahatKey Android v0.1
-STATUS: Source code generated; NOT APK-built or installed on device.
-Reasons: Android SDK, Android Gradle tooling and access to dependency downloads were absent in this runtime.
-Source logo: user-supplied PDF embedded verbatim in assets, rasterized into drawable, not redesigned.
-Platform: Android minSdk 26, targetSdk 34; build requires SDK 35 and Android Gradle Plugin 8.7.3.
-Key tests after build: AR/EN typing, 123 right-side keypad western digits only, backspace hold, space swipe, clipboard insertion, password exclusion, screen rotations.
-Security: no INTERNET permission; confirmed public Nafahat data only.
+NafahatKey v0.3
+Branch: chatgpt-v0.3, NEVER push on main.
+CI: Android SDK 35 + Java 17 debug build and pure Java tests on GitHub Actions.
+Signed release: conditional on 4 explicit NAFAHATKEY_* GitHub Secrets; never embed keystore in repo.
+Runtime device validation: NOT PERFORMED.
+Current acceptance and remaining gaps: docs/V0.3_IMPLEMENTATION_REPORT.md
+Important: repository visibility reported PUBLIC by GitHub, though requested private.
+Warning: old main workflow force-pushes debug APK to apk-builds; coordinate before publishing signed Release.
