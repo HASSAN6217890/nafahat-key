@@ -14,6 +14,8 @@ import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ArrayAdapter;
+import android.widget.Spinner;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -38,7 +40,7 @@ import java.util.regex.Pattern;
 public final class MainActivity extends Activity {
     private static final int IMPORT_CHAT=501, IMPORT_LIBRARY=502, EXPORT_LIBRARY=503;
     private static final Pattern WHATSAPP_LINE=Pattern.compile(
-        "^(?:\\[)?\\d{1,2}[/.]\\d{1,2}[/.]\\d{2,4},?\\s+[^\\]]{0,45}\\]?\\s*[-–]?\\s*([^:]{1,90}):\\s*(.*)$");
+        "^\\[?\\d{1,2}[/.]\\d{1,2}[/.]\\d{2,4},?\\s+\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[AaPp]\\.?[Mm]\\.?)?\\]?\\s*(?:[-–]\\s*)?([^:]{1,90}):\\s*(.*)$");
     private KeyboardPrefs prefs;
     private LibraryDb db;
     private LearningModel model;
@@ -118,8 +120,20 @@ public final class MainActivity extends Activity {
         try{personal=db.getPersonal();}catch(Exception e){description("تعذرت قراءة المكتبة. لم تُحذف أي بيانات.");return;}
         String last="";
         for(Snippet s:personal){
-            if(!s.category.equals(last)){last=s.category;heading(last);}
+            if(!s.category.equals(last)){
+                last=s.category;heading(last);
+                String group=last;
+                action("أرشفة مجموعة "+group,()->new AlertDialog.Builder(this)
+                    .setMessage("أرشفة المجموعة وإخفاؤها من لوحة المفاتيح؟")
+                    .setNegativeButton("إلغاء",null)
+                    .setPositiveButton("أرشفة",(d,w)->{db.archiveCollection(group,true);render();}).show());
+            }
             action(s.title+" — "+shorten(s.text,65),()->snippetDialog(s,null));
+        }
+        for(String archived:db.collectionNames(true)){
+            action("استعادة المجموعة المؤرشفة: "+archived,()->{
+                db.archiveCollection(archived,false);render();
+            });
         }
         heading("النصوص الرسمية");
         for(Snippet s:BrandData.publicSnippets())
@@ -133,15 +147,19 @@ public final class MainActivity extends Activity {
         EditText group=new EditText(this);group.setHint("المجموعة (مثل: رحلة 7.1)");
         EditText title=new EditText(this);title.setHint("عنوان النص");
         EditText text=new EditText(this);text.setHint("النص المحفوظ");text.setMinLines(3);
+        String[] typeNames={"رد","واتساب","إنستغرام قصير","أسعار","عنوان/روابط","أخرى"};
+        Spinner type=new Spinner(this);
+        type.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,typeNames));
+        if(old!=null){int index=java.util.Arrays.asList(typeNames).indexOf(old.type);if(index>=0)type.setSelection(index);}
         if(old!=null){group.setText(old.category);title.setText(old.title);text.setText(old.text);}
         if(preset!=null)text.setText(preset);
-        fields.addView(group);fields.addView(title);fields.addView(text);
+        fields.addView(group);fields.addView(title);fields.addView(type);fields.addView(text);
         AlertDialog.Builder box=new AlertDialog.Builder(this).setTitle(old==null?"إضافة نص":"تعديل نص")
             .setView(fields).setNegativeButton("إلغاء",null)
             .setPositiveButton("حفظ",(d,w)->{
                 try{
-                    if(old!=null)db.delete(old.id);
-                    db.add(title.getText().toString(),text.getText().toString(),group.getText().toString());
+                    if(old!=null)db.update(old.id,title.getText().toString(),text.getText().toString(),group.getText().toString(),type.getSelectedItem().toString());
+                    else db.add(title.getText().toString(),text.getText().toString(),group.getText().toString(),type.getSelectedItem().toString());
                     render();
                 }catch(Exception e){toast("لم يُحفظ النص. بقيت النسخة الاحتياطية.");}
             });
