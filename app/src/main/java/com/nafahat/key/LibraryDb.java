@@ -88,8 +88,8 @@ public final class LibraryDb extends SQLiteOpenHelper {
     public List<Snippet> getAll(){
         ArrayList<Snippet> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery(
-            "SELECT s.id,s.title,s.body,c.name,c.builtin FROM snippets s JOIN collections c ON c.id=s.collection_id WHERE c.archived=0 ORDER BY s.pinned DESC,s.last_used DESC,c.sort,s.sort,s.title",null)){
-            while(c.moveToNext())out.add(new Snippet(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4)!=0));
+            "SELECT s.id,s.title,s.body,c.name,c.builtin,s.type,s.shortcut,s.pinned,s.last_used FROM snippets s JOIN collections c ON c.id=s.collection_id WHERE c.archived=0 ORDER BY s.pinned DESC,s.last_used DESC,c.sort,s.sort,s.title",null)){
+            while(c.moveToNext())out.add(new Snippet(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4)!=0,c.getString(5),c.getString(6),c.getInt(7)!=0,c.getLong(8)));
         }
         return out;
     }
@@ -130,10 +130,40 @@ public final class LibraryDb extends SQLiteOpenHelper {
         }finally{db.endTransaction();}
     }
     public void recordUse(String id){
-        // Usage metadata need not make an expensive full-file backup for each inserted reply.
+        try{backupBeforeWrite();}catch(Exception e){return;}
         SQLiteDatabase db=getWritableDatabase();
         db.execSQL("UPDATE snippets SET last_used=?,use_count=use_count+1 WHERE id=?",
             new Object[]{System.currentTimeMillis(),id});
+    }
+    public void update(String id,String title,String body,String collection,String type){
+        if(title==null||title.trim().isEmpty()||body==null||body.trim().isEmpty())
+            throw new IllegalArgumentException("Required text");
+        try{backupBeforeWrite();}catch(Exception e){throw new IllegalStateException(e);}
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            long col=collectionId(db,collection,true);
+            ContentValues values=new ContentValues();
+            values.put("collection_id",col);values.put("title",title.trim());
+            values.put("body",body.trim());values.put("type",type);
+            values.put("updated_at",System.currentTimeMillis());
+            if(db.update("snippets",values,"id=? AND collection_id IN (SELECT id FROM collections WHERE builtin=0)",new String[]{id})!=1)
+                throw new IllegalArgumentException("Unknown personal text");
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+    }
+    public void archiveCollection(String name,boolean archive){
+        try{backupBeforeWrite();}catch(Exception e){throw new IllegalStateException(e);}
+        getWritableDatabase().execSQL("UPDATE collections SET archived=? WHERE name=? AND builtin=0",
+            new Object[]{archive?1:0,name});
+    }
+    public List<String> collectionNames(boolean archived){
+        ArrayList<String> names=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery(
+          "SELECT name FROM collections WHERE builtin=0 AND archived=? ORDER BY sort,name",
+          new String[]{archived?"1":"0"})){
+            while(c.moveToNext())names.add(c.getString(0));
+        }
+        return names;
     }
     public void togglePinned(String id){
         try{backupBeforeWrite();}catch(Exception e){return;}
