@@ -1,0 +1,4 @@
+debug
+versionName=0.3.13
+versionCode=113
+commit=914b61d63fdf3683ac391012efc62e02548abb23
