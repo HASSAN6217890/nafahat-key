@@ -23,7 +23,8 @@ android {
                 storeFile file(keystorePath)
                 storePassword System.getenv('NAFAHATKEY_STORE_PASSWORD')
                 keyAlias System.getenv('NAFAHATKEY_KEY_ALIAS')
-                keyPassword System.getenv('NAFAHATKEY_KEY_PASSWORD')
+                // PKCS12 keystores (keytool's default) have one password for store and key.
+                keyPassword System.getenv('NAFAHATKEY_STORE_PASSWORD')
             }
         }
     }
@@ -32,6 +33,11 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     buildTypes {
+        debug {
+            // A debug build is a separate app so it can never collide with the signed release.
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
         release {
             minifyEnabled false
             if (hasSigning) signingConfig signingConfigs.release
