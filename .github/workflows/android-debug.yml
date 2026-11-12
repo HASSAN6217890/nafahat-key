@@ -2,7 +2,7 @@ name: Build Android debug APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'feature/nafahatkey-0.2']
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,12 +23,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Verify keyboard layouts and privacy
+        run: python3 tools/verify_keyboard_v02.py
       - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: NafahatKey-debug-apk
           path: app/build/outputs/apk/debug/*.apk
       - name: Publish APK to the apk-builds branch
+        if: github.ref == 'refs/heads/main'
         run: |
           mkdir /tmp/pub && cp app/build/outputs/apk/debug/app-debug.apk /tmp/pub/NafahatKey.apk
           cd /tmp/pub
