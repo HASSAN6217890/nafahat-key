@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""Generate NafahatKey dictionary assets offline (run locally, output is committed).
+
+Requires: pip install wordfreq
+Outputs (app/src/main/assets/dict/):
+  ar.txt / en.txt   one word per line: word<TAB>score   (score = round(zipf*10), sorted by score desc)
+  bigrams.txt       w1<TAB>w2<TAB>count  (from the curated phrase list below)
+No user data is involved; everything here is public vocabulary.
+"""
+import re
+from collections import Counter
+from pathlib import Path
+from wordfreq import top_n_list, zipf_frequency
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "app/src/main/assets/dict"
+OUT.mkdir(parents=True, exist_ok=True)
+
+AR_WORD = re.compile(r"^[ء-غف-يٱ]+$")
+EN_WORD = re.compile(r"^[a-z]+(?:'[a-z]+)?$")
+TASHKEEL = re.compile(r"[ً-ْـٰ]")
+
+NAFAHAT = """عمرة العمرة تأشيرة التأشيرة تأشيرات المدينة المنورة مكة المكرمة نسك إحرام الإحرام طواف الطواف
+سعي السعي زيارة الزيارة زيارات الطيلوني اللاميرادا نفحات الحسام الروضة الشريفة البقيع قباء أحد
+معتمر معتمرين المعتمرين حج الحج حجاج الحجاج رحلة الرحلة رحلات الرحلات الحرم المسجد النبوي الحرام
+الميقات التلبية لبيك الكعبة الحجر الأسود زمزم الصفا المروة جدة الطائف المدينة مكة دمشق حلب حمص حماة إدلب
+فندق الفندق الفنادق الباص الباصات جواز الجواز السفر صورة شخصية حجز الحجز المقعد المكتب الاستفسار
+الحمرا مول عصير أبو الشكر الطابق الثالث بناء المؤسسة الدوام الجمعة عطلة واتساب فيسبوك الموقع""".split()
+
+SHAMI = """شو هلأ هلق منيح منيحة كتير بدي بدك بدكن بدنا هيك ليش وين إمتى امتى لسا لسه يعني طيب والله
+إن شاء الله ان شاء الله الله يعطيك العافية يعطيك العافية تكرم تكرمي تكرموا حبيبي حبيبتي أهلين أهلا مرحبا
+يسلمو يسلموا تسلم تسلمي ماشي تمام خلص هاد هادا هاي هدول هنن هني منشان مشان كمان شوي شوية بكرا
+مبارح هون هنيك فيك فيكي فينا عنا عندك عندكن معك معكن حكيت حكينا بحكي منحكي بشوفك نشوفكم ابعتلي
+ابعتلك بعتلك بعتتلك اتصل اتصلي رح رح نرد نتواصل بتمنى بنتمنى الحمد لله الحمدلله ما شاء الله جزاك الله خير
+الله يسلمك الله يخليك تفضل تفضلي تفضلوا أكيد طبعا ولا يهمك على راسي من عيوني""".split()
+
+PHRASES = """
+السلام عليكم ورحمة الله وبركاته
+وعليكم السلام ورحمة الله وبركاته
+أهلا وسهلا ومرحبا
+أهلا وسهلا فيك
+أهلين فيك
+مرحبا كيفك
+كيف حالك
+كيفك إن شاء الله منيح
+الحمد لله على كل حال
+الله يعطيك العافية
+يعطيك العافية
+الله يسلمك
+الله يخليك
+جزاك الله خير
+جزاكم الله خيرا
+بارك الله فيك
+بارك الله فيكم
+إن شاء الله خير
+إن شاء الله بتكون رحلة موفقة
+ما شاء الله
+تقبل الله منا ومنكم
+عمرة مقبولة إن شاء الله
+حج مبرور وسعي مشكور
+شوف كيف
+شوف إذا
+شو بدك
+شو رأيك
+شو الأخبار
+شو في
+بدي احجز
+بدي اسأل عن العمرة
+بدي اسأل عن الرحلة
+بدي اعرف السعر
+بدي اعرف موعد الرحلة
+بدك تحجز
+بدكن تحجزوا
+ليش لا
+وين المكتب
+وين مكان الانطلاق
+وين بالضبط
+إمتى الرحلة
+إمتى موعد الانطلاق
+إمتى بتطلع الرحلة
+لسا ما وصل
+لسا ما في
+يعني إن شاء الله
+طيب تمام
+طيب ماشي
+تمام إن شاء الله
+والله ما بعرف
+والله العظيم
+حياكم الله في نفحات للحج والعمرة
+نفحات للحج والعمرة
+أهلا وسهلا بكم في نفحات للحج والعمرة
+كيف يمكننا مساعدتكم
+يسعدنا تواصلكم معنا
+يسعدنا زيارتكم في المكتب
+نتشرف بزيارتكم
+للحجز والاستفسار يمكنكم التواصل معنا
+يمكنكم التواصل معنا على الرقم
+يمكنكم زيارة المكتب
+أوقات الدوام من الساعة
+الجمعة عطلة
+العنوان شارع الحمرا
+شارع الحمرا اللاميرادا مول
+فوق عصير أبو الشكر
+الطابق الثالث بناء الطيلوني
+رحلة العمرة
+رحلة عمرة
+موعد الرحلة القادمة
+الرحلة القادمة
+الرحلة المميزة
+برنامج الرحلة
+تفاصيل الرحلة
+مدة الرحلة
+عدد الأيام
+المدينة المنورة
+مكة المكرمة
+المسجد النبوي الشريف
+المسجد الحرام
+الروضة الشريفة
+مسجد قباء
+جبل أحد
+بقيع الغرقد
+زيارة المدينة المنورة
+زيارة الروضة الشريفة
+تصريح الروضة عن طريق نسك
+تطبيق نسك
+التأشيرة جاهزة
+تأشيرة العمرة
+صورة جواز السفر
+صورة شخصية بخلفية بيضاء
+جواز السفر ساري المفعول
+يرجى إرسال صورة الجواز
+يرجى إرسال صورة شخصية
+الرجاء الانتظار قليلا
+نعتذر عن التأخير
+شكرا لتواصلكم
+شكرا جزيلا
+شكرا لك
+عفوا
+بأقرب وقت
+بأسرع وقت ممكن
+رح نرد عليك
+رح نتواصل معك
+رح نبعتلك التفاصيل
+ابعتلي رقمك
+ابعتلي الصورة
+بعتتلك التفاصيل
+خلص تمام
+خلص ماشي
+على راسي
+من عيوني
+تكرم عينك
+ولا يهمك
+الله يوفقك
+الله يتقبل منك
+الله يتقبل منا ومنكم
+في أمان الله
+مع السلامة
+الله معك
+تصبح على خير
+صباح الخير
+صباح النور
+مساء الخير
+مساء النور
+رمضان كريم
+عيد مبارك
+كل عام وأنتم بخير
+لا إله إلا الله
+سبحان الله
+صلى الله عليه وسلم
+اللهم صل على سيدنا محمد
+hello how are you
+thank you very much
+thanks a lot
+see you soon
+good morning
+good night
+please send me
+let me know
+as soon as possible
+""".strip().splitlines()
+
+def ar_list(n):
+    seen, out = set(), []
+    for w in top_n_list("ar", n * 2):
+        w = TASHKEEL.sub("", w)
+        if not AR_WORD.match(w) or w in seen:
+            continue
+        if len(w) < 2 and w not in ("و", "ب", "ل", "ف"):
+            continue
+        seen.add(w)
+        out.append((w, max(1, round(zipf_frequency(w, "ar") * 10))))
+        if len(out) >= n:
+            break
+    return out, seen
+
+def en_list(n):
+    seen, out = set(), []
+    for w in top_n_list("en", n * 2):
+        if not EN_WORD.match(w) or w in seen:
+            continue
+        if len(w) < 2 and w not in ("a", "i"):
+            continue
+        seen.add(w)
+        out.append((w, max(1, round(zipf_frequency(w, "en") * 10))))
+        if len(out) >= n:
+            break
+    return out, seen
+
+def words_of(text):
+    return [TASHKEEL.sub("", t) for t in re.findall(r"[ء-يٱ]+|[A-Za-z']+", text)]
+
+ar, ar_seen = ar_list(50000)
+en, en_seen = en_list(30000)
+extra = {}
+for w in words_of(" ".join(NAFAHAT + SHAMI) + " " + " ".join(PHRASES)):
+    if AR_WORD.match(w):
+        extra[w] = max(extra.get(w, 0), 55)
+ar_map = dict(ar)
+for w, s in extra.items():
+    ar_map[w] = max(ar_map.get(w, 0), s)
+ar_sorted = sorted(ar_map.items(), key=lambda kv: (-kv[1], kv[0]))
+en_map = dict(en)
+en_map["i"] = max(en_map.get("i", 0), 70)
+en_sorted = sorted(en_map.items(), key=lambda kv: (-kv[1], kv[0]))
+
+bigrams = Counter()
+for line in PHRASES:
+    ws = [w.lower() if re.match(r"[A-Za-z]", w) else w for w in words_of(line)]
+    for a, b in zip(ws, ws[1:]):
+        bigrams[(a, b)] += 1
+
+def write(name, rows):
+    with open(OUT / name, "w", encoding="utf-8", newline="\n") as f:
+        for r in rows:
+            f.write("\t".join(str(x) for x in r) + "\n")
+
+write("ar.txt", ar_sorted)
+write("en.txt", en_sorted)
+write("bigrams.txt", sorted(((a, b, c) for (a, b), c in bigrams.items())))
+print(f"ar={len(ar_sorted)} en={len(en_sorted)} bigrams={len(bigrams)}")
