@@ -49,7 +49,19 @@ public final class NafahatKeyboardService extends InputMethodService
         keyboard.setSensitive(engine.isSensitive());
         keyboard.setLanguage(engine.arabic(),engine.upper());
         keyboard.setMode(engine.mode());
-        keyboard.setSuggestions(engine.suggestions());
+        List<String> suggestions=engine.suggestions();
+        if(!engine.isSensitive()&&engine.composingText().startsWith("#")){
+            String prefix=engine.composingText().substring(1);
+            java.util.ArrayList<String> shortCodes=new java.util.ArrayList<>();
+            for(Snippet entry:library.getAll()){
+                if(entry.title.startsWith(prefix)||(!entry.shortcut.isEmpty()&&entry.shortcut.startsWith(prefix))){
+                    shortCodes.add("#"+entry.title);
+                    if(shortCodes.size()==3)break;
+                }
+            }
+            suggestions=shortCodes;
+        }
+        keyboard.setSuggestions(suggestions);
         if(engine.mode().equals("library")&&!engine.isSensitive())keyboard.setSnippets(library.getAll());
     }
     @Override public void onUpdateSelection(int oldSelStart,int oldSelEnd,int newSelStart,
@@ -127,7 +139,7 @@ public final class NafahatKeyboardService extends InputMethodService
         if(engine.isSensitive())return;
         if(suggestion.startsWith("#")){
             for(Snippet item:library.getAll()){
-                if(suggestion.equals("#"+item.title)){engine.insertSnippet(item.text);library.recordUse(item.id);return;}
+                if(suggestion.equals("#"+item.title)){engine.replaceComposingWithSnippet(item.text);library.recordUse(item.id);return;}
             }
         }
         engine.candidate(suggestion);
