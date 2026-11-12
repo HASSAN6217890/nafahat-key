@@ -1,7 +1,0 @@
-Project: NafahatKey Android v0.1
-STATUS: Source code generated; NOT APK-built or installed on device.
-Reasons: Android SDK, Android Gradle tooling and access to dependency downloads were absent in this runtime.
-Source logo: user-supplied PDF embedded verbatim in assets, rasterized into drawable, not redesigned.
-Platform: Android minSdk 26, targetSdk 34; build requires SDK 35 and Android Gradle Plugin 8.7.3.
-Key tests after build: AR/EN typing, 123 right-side keypad western digits only, backspace hold, space swipe, clipboard insertion, password exclusion, screen rotations.
-Security: no INTERNET permission; confirmed public Nafahat data only.

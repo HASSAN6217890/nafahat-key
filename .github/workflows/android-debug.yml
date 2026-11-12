@@ -1,8 +1,8 @@
-name: Build Android debug APK
+name: Build NafahatKey APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'feature/nafahatkey-0.2']
+    branches: [main, 'wip/**']
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,27 +17,73 @@ jobs:
       # The runner image already ships the Android SDK; use it directly.
       - name: Install Android platform 35
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Verify keyboard layouts and privacy
-        run: python3 tools/verify_keyboard_v02.py
-      - run: gradle --no-daemon :app:assembleDebug
+      - name: Verify layouts, privacy and assets
+        run: python3 tools/verify_keyboard_v03.py
+      - name: Version numbers
+        run: |
+          echo "NAFAHATKEY_VERSION_CODE=$((GITHUB_RUN_NUMBER + 100))" >> "$GITHUB_ENV"
+          echo "NAFAHATKEY_VERSION_NAME=0.3.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+      # A signed release is built only when all four signing secrets exist.
+      # The keystore is decoded into the runner's temp folder and deleted at the end.
+      - name: Prepare signing key
+        id: sign
+        env:
+          KS_B64: ${{ secrets.NAFAHATKEY_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.NAFAHATKEY_STORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.NAFAHATKEY_KEY_ALIAS }}
+          KS_KEYPASS: ${{ secrets.NAFAHATKEY_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KS_ALIAS" ] && [ -n "$KS_KEYPASS" ]; then
+            printf '%s' "$KS_B64" | base64 -d -i > "$RUNNER_TEMP/nafahatkey.jks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets found: building a signed release."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets not set: building the debug APK instead."
+          fi
+      - name: Build signed release APK
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          NAFAHATKEY_KEYSTORE_PATH: ${{ runner.temp }}/nafahatkey.jks
+          NAFAHATKEY_STORE_PASSWORD: ${{ secrets.NAFAHATKEY_STORE_PASSWORD }}
+          NAFAHATKEY_KEY_ALIAS: ${{ secrets.NAFAHATKEY_KEY_ALIAS }}
+          NAFAHATKEY_KEY_PASSWORD: ${{ secrets.NAFAHATKEY_KEY_PASSWORD }}
+        run: |
+          gradle --no-daemon :app:assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/NafahatKey.apk"
+          echo "BUILD_KIND=signed-release" >> "$GITHUB_ENV"
+      - name: Build debug APK (no signing secrets)
+        if: steps.sign.outputs.signed != 'true'
+        run: |
+          gradle --no-daemon :app:assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/NafahatKey.apk"
+          echo "BUILD_KIND=debug" >> "$GITHUB_ENV"
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/nafahatkey.jks"
       - uses: actions/upload-artifact@v4
         with:
-          name: NafahatKey-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: NafahatKey-apk
+          path: ${{ runner.temp }}/NafahatKey.apk
       - name: Publish APK to the apk-builds branch
         if: github.ref == 'refs/heads/main'
         run: |
-          mkdir /tmp/pub && cp app/build/outputs/apk/debug/app-debug.apk /tmp/pub/NafahatKey.apk
+          mkdir /tmp/pub && cp "$RUNNER_TEMP/NafahatKey.apk" /tmp/pub/NafahatKey.apk
           cd /tmp/pub
+          {
+            echo "$BUILD_KIND"
+            echo "versionName=$NAFAHATKEY_VERSION_NAME"
+            echo "versionCode=$NAFAHATKEY_VERSION_CODE"
+            echo "commit=$GITHUB_SHA"
+          } > BUILD_INFO.txt
           git init -q -b apk-builds
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add NafahatKey.apk
-          git commit -qm "APK from ${GITHUB_SHA}"
+          git add NafahatKey.apk BUILD_INFO.txt
+          git commit -qm "APK ($BUILD_KIND $NAFAHATKEY_VERSION_NAME) from ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" apk-builds
