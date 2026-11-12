@@ -250,7 +250,10 @@ public final class CanvasKeyboardView extends View {
         for(Snippet s:snippets)if((selectedGroup==0||s.category.equals(groups.get(selectedGroup))))
             filtered.add(s);
         if(selectedType!=0)filtered.removeIf(s->!typeFor(s).equals(types[selectedType]));
-        filtered.sort((a,b)->Boolean.compare(b.official,a.official));
+        filtered.sort((a,b)->{
+            if(a.pinned!=b.pinned)return a.pinned?-1:1;
+            return Long.compare(b.lastUsed,a.lastUsed);
+        });
         libraryPage=Math.min(libraryPage,Math.max(0,(filtered.size()-1)/3));
         int first=libraryPage*3;
         for(int i=0;i<3&&first+i<filtered.size();i++){
@@ -258,7 +261,7 @@ public final class CanvasKeyboardView extends View {
             cells.add(new Cell(action("snippet:"+item.id,item.title),new RectF(margin,y+i*dp(52),width-margin,y+(i+1)*dp(52)-dp(4)),item));
         }
     }
-    private String typeFor(Snippet s){return "رد";}
+    private String typeFor(Snippet s){return s.type;}
     private Cell hit(float x,float y){
         Cell nearest=null;float best=Float.MAX_VALUE;
         for(Cell cell:cells){
