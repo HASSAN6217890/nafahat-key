@@ -266,7 +266,6 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         int liftPx = Math.round(liftDp * d);
         int h = KeyboardView.computeHeight(this, layoutFor(arrowCached ? "ar_arrows" : "ar"), heightPct);
         // Reserve room above the strip so the tallest preview / long-press bubble never clips.
-        float d = getResources().getDisplayMetrics().density;
         float pct = heightPct / 100f;
         float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
         float keyDp = tallestRowDp - 6f;
