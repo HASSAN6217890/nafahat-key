@@ -28,6 +28,7 @@ public final class CanvasKeyboardView extends View {
         void onSuggestion(String word);
         void onSpaceSwipe(boolean cursor, int units);
         void onSnippet(Snippet snippet, boolean longPress);
+        void onSnippetPreviewAction(Snippet snippet,String action);
     }
     private static final int WHITE=Color.WHITE, BACK=Color.rgb(23,28,31);
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -44,6 +45,7 @@ public final class CanvasKeyboardView extends View {
     private List<Snippet> snippets=Collections.emptyList();
     private int libraryPage=0, selectedGroup=0, selectedType=0, oneHanded=0;
     private String enterLabel="↵";
+    private Snippet previewSnippet;
     private ValueAnimator layoutAnimator;
     private float transitionAlpha=1f;
     private int cachedHeight=-1; private boolean cachedNumbers=false;
@@ -163,6 +165,37 @@ public final class CanvasKeyboardView extends View {
         }
         c.restoreToCount(layer);
         drawPressBubbles(c);
+        if(previewSnippet!=null)drawSnippetPreview(c);
+    }
+    private void drawSnippetPreview(Canvas c){
+        float x=dp(7),y=keyboardStart+dp(5),w=getWidth()-dp(14),h=getHeight()-y-dp(5);
+        paint.setColor(prefs.background());scratch.set(x,y,x+w,y+h);
+        c.drawRoundRect(scratch,dp(10),dp(10),paint);
+        paint.setColor(prefs.highlightColor());paint.setTextSize(dp(17));
+        paint.setTextAlign(Paint.Align.CENTER);
+        drawOneLine(c,previewSnippet.title,getWidth()/2f,y+dp(30),w-dp(20));
+        paint.setColor(prefs.textColor());paint.setTextSize(dp(13));
+        String text=previewSnippet.text.replace('\n',' ');
+        float lineWidth=w-dp(24);
+        int position=0,lines=0;
+        while(position<text.length()&&lines<5){
+            int end=Math.min(text.length(),position+55);
+            while(end>position+10&&paint.measureText(text.substring(position,end))>lineWidth)end--;
+            if(end<=position)break;
+            paint.setTextAlign(Paint.Align.CENTER);
+            c.drawText(text.substring(position,end),getWidth()/2f,y+dp(55+lines*25),paint);
+            position=end;lines++;
+        }
+        String[] actions={"إدراج","نسخ","تثبيت"};
+        float gap=dp(5),buttonWidth=(w-dp(12)-gap*2)/3f;
+        for(int i=0;i<3;i++){
+            float left=x+dp(6)+i*(buttonWidth+gap),top=y+h-dp(52);
+            paint.setColor(i==0?prefs.specialColor():prefs.keyColor());
+            scratch.set(left,top,left+buttonWidth,top+dp(42));
+            c.drawRoundRect(scratch,dp(8),dp(8),paint);
+            paint.setColor(Color.WHITE);paint.setTextSize(dp(14));paint.setTextAlign(Paint.Align.CENTER);
+            c.drawText(actions[i],left+buttonWidth/2,top+dp(27),paint);
+        }
     }
     private void drawOneLine(Canvas c,String text,float x,float baseline,float maxWidth){
         if(text==null)return;
@@ -297,6 +330,18 @@ public final class CanvasKeyboardView extends View {
     }
     @Override public boolean onTouchEvent(MotionEvent event){
         int action=event.getActionMasked();
+        if(previewSnippet!=null){
+            if(action==MotionEvent.ACTION_DOWN){
+                float y=event.getY(),x=event.getX();
+                if(y>getHeight()-dp(66)){
+                    int index=Math.max(0,Math.min(2,(int)(x/(getWidth()/3f))));
+                    if(listener!=null)listener.onSnippetPreviewAction(previewSnippet,
+                        index==0?"insert":index==1?"copy":"pin");
+                }
+                previewSnippet=null;invalidate();
+            }
+            return true;
+        }
         int index=event.getActionIndex();
         if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN){
             float x=event.getX(index),y=event.getY(index);
@@ -371,7 +416,7 @@ public final class CanvasKeyboardView extends View {
     private void onHold(Press p){
         if(fingers.get(p.pointer)!=p)return;
         p.longHeld=true;
-        if(p.cell.snippet!=null){if(listener!=null)listener.onSnippet(p.cell.snippet,true);}
+        if(p.cell.snippet!=null){previewSnippet=p.cell.snippet;}
         else if("⌫".equals(p.cell.key.code)){
             p.repeat=true;
             Runnable r=new Runnable(){int count=0;@Override public void run(){
