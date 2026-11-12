@@ -1,0 +1,39 @@
+name: Signing path self-test (temporary)
+on:
+  push:
+    branches: ['wip/**']
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Throwaway key, same env contract as the real workflow
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/t.jks" -storepass testpass1 -keypass testpass2 \
+            -alias testalias -keyalg RSA -keysize 2048 -validity 2 -dname "CN=selftest" -noprompt
+          B64=$(base64 -w0 "$RUNNER_TEMP/t.jks")
+          printf '%s' "$B64" | base64 -d -i > "$RUNNER_TEMP/decoded.jks"
+          cmp "$RUNNER_TEMP/t.jks" "$RUNNER_TEMP/decoded.jks"
+          echo "NAFAHATKEY_VERSION_CODE=$((GITHUB_RUN_NUMBER + 100))" >> "$GITHUB_ENV"
+          echo "NAFAHATKEY_VERSION_NAME=0.3.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+      - name: assembleRelease with env signing
+        env:
+          NAFAHATKEY_KEYSTORE_PATH: ${{ runner.temp }}/decoded.jks
+          NAFAHATKEY_STORE_PASSWORD: testpass1
+          NAFAHATKEY_KEY_ALIAS: testalias
+          NAFAHATKEY_KEY_PASSWORD: testpass2
+        run: |
+          gradle --no-daemon :app:assembleRelease
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -3
+          ls -la app/build/outputs/apk/release/

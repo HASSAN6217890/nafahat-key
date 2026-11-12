@@ -485,9 +485,14 @@ public final class KeyboardView extends View {
         // Rollover: a new finger commits any letter still held by an earlier finger, in order.
         for (int i = 0; i < pointers.size(); i++) {
             Pointer o = pointers.valueAt(i);
-            if (!o.committed && !o.popupOpen && o.key.type == Key.CHAR) {
+            if (o.committed || o.popupOpen) continue;
+            if (o.key.type == Key.CHAR) {
                 cancelTimers(o);
                 commitChar(o);
+                o.committed = true;
+            } else if (o.key.type == Key.SPACE && !o.spaceSwipe && !o.cursorMode) {
+                cancelTimers(o);
+                if (listener != null) listener.onKey(o.key, " ");
                 o.committed = true;
             }
         }

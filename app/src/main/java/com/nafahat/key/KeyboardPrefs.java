@@ -39,8 +39,8 @@ public final class KeyboardPrefs {
     public void setNumberRow(boolean yes) { store.edit().putBoolean("number_row_v3", yes).apply(); }
     public boolean vibrate() { return store.getBoolean("vibrate_v3", true); }
     public void setVibrate(boolean yes) { store.edit().putBoolean("vibrate_v3", yes).apply(); }
-    /** 1 light, 2 medium, 3 strong. */
-    public int vibrationLevel() { return clamp(store.getInt("vibration_level", 1), 1, 3); }
+    /** 1 light, 2 medium (KEYBOARD_PRESS, default), 3 strong. */
+    public int vibrationLevel() { return clamp(store.getInt("vibration_level", 2), 1, 3); }
     public void setVibrationLevel(int v) { store.edit().putInt("vibration_level", clamp(v, 1, 3)).apply(); }
     public boolean autoCap() { return store.getBoolean("auto_cap", true); }
     public void setAutoCap(boolean yes) { store.edit().putBoolean("auto_cap", yes).apply(); }
@@ -99,7 +99,7 @@ public final class KeyboardPrefs {
         if (o.has("font")) setFontPercent(o.optInt("font", 100));
         if (o.has("number_row")) setNumberRow(o.optBoolean("number_row", true));
         if (o.has("vibrate")) setVibrate(o.optBoolean("vibrate", true));
-        if (o.has("vibration_level")) setVibrationLevel(o.optInt("vibration_level", 1));
+        if (o.has("vibration_level")) setVibrationLevel(o.optInt("vibration_level", 2));
         if (o.has("auto_cap")) setAutoCap(o.optBoolean("auto_cap", true));
         if (o.has("auto_correct")) setAutoCorrect(o.optBoolean("auto_correct", true));
         if (o.has("one_handed")) setOneHanded(o.optInt("one_handed", 0));

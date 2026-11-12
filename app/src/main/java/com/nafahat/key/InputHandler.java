@@ -207,10 +207,10 @@ public final class InputHandler {
         boolean ours;
         if (word.length() > 0) {
             if (composeStart < 0 && candStart >= 0) composeStart = candStart;
+            // Ours: the composing region we set, or a stale update from before the word started.
             ours = collapsed && ((candStart >= 0 && candStart == composeStart && candEnd == newSelEnd
                 && candEnd - candStart <= word.length())
-                || (candStart < 0 && composeStart >= 0 && newSelStart <= composeStart)
-                || wasRecent(newSelStart));
+                || (candStart < 0 && composeStart >= 0 && newSelStart <= composeStart));
         } else {
             ours = collapsed && (belief < 0 || newSelStart == belief || wasRecent(newSelStart));
             if (ours && belief < 0) belief = newSelStart;
@@ -426,20 +426,31 @@ public final class InputHandler {
         String b = before.toString();
         int cp = b.codePointBefore(b.length());
         int units = Character.charCount(cp);
-        ic.deleteSurroundingText(units, 0);
         String remaining = b.substring(0, b.length() - units);
-        if (belief >= 0) setBelief(belief - units);
         int start = remaining.length();
         while (start > 0 && TextNorm.isWordChar(remaining.charAt(start - 1))) start--;
         String tail = remaining.substring(start);
-        if (!tail.isEmpty() && belief >= tail.length() && tail.length() <= 24) {
+        boolean resume = !tail.isEmpty() && tail.length() <= 24 && canSuggest()
+            && (start > 0 ? Character.isWhitespace(remaining.charAt(start - 1)) : b.length() < 48);
+        if (resume) {
+            // Re-open the previous word for suggestions using relative edits only (no absolute positions).
+            ic.beginBatchEdit();
+            ic.deleteSurroundingText(units + tail.length(), 0);
+            ic.setComposingText(tail, 1);
+            ic.endBatchEdit();
+            if (belief >= 0) {
+                composeStart = belief - units - tail.length();
+                setBelief(belief - units);
+            } else {
+                composeStart = -1;
+            }
             word.setLength(0);
             word.append(tail);
-            composeStart = belief - tail.length();
-            ic.setComposingRegion(composeStart, belief);
             prevWord = null;
             requestSuggestions();
         } else {
+            ic.deleteSurroundingText(units, 0);
+            if (belief >= 0) setBelief(belief - units);
             prevWord = null;
             if (belief == 0) {
                 CharSequence after = ic.getTextAfterCursor(1, 0);
