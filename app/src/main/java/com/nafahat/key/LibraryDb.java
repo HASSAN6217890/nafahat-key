@@ -112,12 +112,13 @@ public final class LibraryDb extends SQLiteOpenHelper {
         }
         if(!tmp.renameTo(destination))throw new java.io.IOException("Cannot preserve library snapshot");
     }
-    public void add(String title,String body,String collection){
+    public void add(String title,String body,String collection){add(title,body,collection,"رد");}
+    public void add(String title,String body,String collection,String type){
         if(title==null||title.trim().isEmpty()||body==null||body.trim().isEmpty())return;
         try{backupBeforeWrite();}catch(Exception e){throw new IllegalStateException("تعذّر إنشاء النسخة الاحتياطية",e);}
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{
-            insertSnippet(db,UUID.randomUUID().toString(),title.trim(),body.trim(),collection,"رد",false);
+            insertSnippet(db,UUID.randomUUID().toString(),title.trim(),body.trim(),collection,type,false);
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
