@@ -42,6 +42,7 @@ public final class CanvasKeyboardView extends View {
     private List<String> suggestions=Collections.emptyList();
     private List<Snippet> snippets=Collections.emptyList();
     private int libraryPage=0, selectedGroup=0, selectedType=0, oneHanded=0;
+    private String enterLabel="↵";
     private int cachedHeight=-1; private boolean cachedNumbers=false;
     private List<String> groups=Collections.emptyList();
     private final String[] types={"الكل","واتساب","إنستغرام قصير","رد","أسعار","عنوان/روابط","أخرى"};
@@ -70,6 +71,9 @@ public final class CanvasKeyboardView extends View {
     }
     public CanvasKeyboardView(Context c,AttributeSet a){this(c,new KeyboardPrefs(c),null);}
     public void setListener(Listener l){listener=l;}
+    public void setEnterLabel(String value){
+        if(!enterLabel.equals(value)){enterLabel=value;refresh();}
+    }
     public void setSettings(KeyboardPrefs value){
         prefs=value;
         int height=value.heightPercent();boolean numbers=value.numberRow();
@@ -194,7 +198,9 @@ public final class CanvasKeyboardView extends View {
             float weights=0;for(KeyboardLayout.Key k:row.keys)weights+=k.weight;
             float available=actualWidth-2*margin-2*inset-gap*(row.keys.size()-1);
             float x=startX+margin+inset;
-            for(KeyboardLayout.Key k:row.keys){
+            for(KeyboardLayout.Key original:row.keys){
+                KeyboardLayout.Key k=original.code.equals("↵")
+                    ?new KeyboardLayout.Key("↵",enterLabel,"",original.weight,true):original;
                 float keyWidth=available*k.weight/weights;
                 cells.add(new Cell(k,new RectF(x,y+dp(2),x+keyWidth,y+height-dp(4))));
                 x+=keyWidth+gap;

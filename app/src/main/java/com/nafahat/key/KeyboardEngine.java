@@ -48,6 +48,18 @@ public final class KeyboardEngine {
     public boolean upper(){return caps||shift;}
     public String mode(){return mode;}
     public String composingText(){return composing.toString();}
+    public String enterLabel(){
+        if(editor==null||(editor.imeOptions&EditorInfo.IME_FLAG_NO_ENTER_ACTION)!=0)return "↵";
+        switch(editor.imeOptions&EditorInfo.IME_MASK_ACTION){
+            case EditorInfo.IME_ACTION_SEND:return "➤";
+            case EditorInfo.IME_ACTION_SEARCH:return "⌕";
+            case EditorInfo.IME_ACTION_NEXT:return "→";
+            case EditorInfo.IME_ACTION_GO:return "➜";
+            case EditorInfo.IME_ACTION_DONE:return "✓";
+            case EditorInfo.IME_ACTION_PREVIOUS:return "←";
+            default:return "↵";
+        }
+    }
     public void setMode(String value){
         if(sensitive&&("library".equals(value)||"menu".equals(value)))return;
         mode=value;changed();

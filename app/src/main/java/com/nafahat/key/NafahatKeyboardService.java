@@ -62,6 +62,7 @@ public final class NafahatKeyboardService extends InputMethodService
             suggestions=shortCodes;
         }
         keyboard.setSuggestions(suggestions);
+        keyboard.setEnterLabel(engine.enterLabel());
         if(engine.mode().equals("library")&&!engine.isSensitive())keyboard.setSnippets(library.getAll());
     }
     @Override public void onUpdateSelection(int oldSelStart,int oldSelEnd,int newSelStart,
