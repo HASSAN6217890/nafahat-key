@@ -135,7 +135,7 @@ public final class CanvasKeyboardView extends View {
             } else {
                 drawOneLine(c,cell.key.label,r.centerX(),r.centerY()-(paint.ascent()+paint.descent())/2,r.width()-dp(5));
                 if(!cell.key.secondary.isEmpty()){
-                    paint.setTextSize(dp(11));paint.setColor(Color.argb(160,240,240,240));
+                    paint.setTextSize(dp(11));paint.setColor(prefs.isDark()?Color.argb(170,240,240,240):Color.argb(170,30,40,34));
                     paint.setTextAlign(Paint.Align.RIGHT);
                     c.drawText(cell.key.secondary,r.right-dp(5),r.top+dp(14),paint);
                 }
@@ -281,7 +281,13 @@ public final class CanvasKeyboardView extends View {
             if(y<keyboardStart&&y>=previewTop){toolbarTap(x);return true;}
             Cell selected=hit(x,y);if(selected==null)return true;
             Press p=new Press(id,selected,x,y);fingers.put(id,p);
-            if(prefs.vibrate())performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if(prefs.vibrate()&&prefs.vibrationStrength()>0){
+                int strength=prefs.vibrationStrength();
+                int pattern=strength==1?HapticFeedbackConstants.KEYBOARD_PRESS:
+                    strength==2?HapticFeedbackConstants.VIRTUAL_KEY:HapticFeedbackConstants.LONG_PRESS;
+                // HapticFeedback avoids requesting VIBRATE, which the specification forbids.
+                performHapticFeedback(pattern);
+            }
             p.timer=()->onHold(p);
             handler.postDelayed(p.timer,300);
             invalidate();return true;
@@ -370,7 +376,10 @@ public final class CanvasKeyboardView extends View {
                 for(int j=0;j<choices.size();j++){
                     if(j==p.optionIndex){paint.setColor(prefs.highlightColor());
                         c.drawRoundRect(new RectF(left+dp(4)+j*cellW,top+dp(2),left+dp(4)+(j+1)*cellW,top+dp(41)),dp(6),dp(6),paint);}
-                    paint.setColor(WHITE);c.drawText(choices.get(j),left+dp(4)+(j+.5f)*cellW,top+dp(28),paint);
+                    paint.setColor(WHITE);String shown=choices.get(j);
+                    if(shown.length()==1&&shown.charAt(0)>='\u064B'&&shown.charAt(0)<='\u065F')
+                        shown="◌"+shown;
+                    c.drawText(shown,left+dp(4)+(j+.5f)*cellW,top+dp(28),paint);
                 }
             }else{
                 float left=Math.max(dp(2),Math.min(getWidth()-dp(53),key.centerX()-dp(27)));
