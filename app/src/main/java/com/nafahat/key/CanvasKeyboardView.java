@@ -450,7 +450,8 @@ public final class CanvasKeyboardView extends View {
                 paint.setColor(WHITE);paint.setTextAlign(Paint.Align.CENTER);paint.setTextSize(dp(19));
                 for(int j=0;j<choices.size();j++){
                     if(j==p.optionIndex){paint.setColor(prefs.highlightColor());
-                        c.drawRoundRect(new RectF(left+dp(4)+j*cellW,top+dp(2),left+dp(4)+(j+1)*cellW,top+dp(41)),dp(6),dp(6),paint);}
+                        scratch.set(left+dp(4)+j*cellW,top+dp(2),left+dp(4)+(j+1)*cellW,top+dp(41));
+                        c.drawRoundRect(scratch,dp(6),dp(6),paint);}
                     paint.setColor(WHITE);String shown=choices.get(j);
                     if(shown.length()==1&&shown.charAt(0)>='\u064B'&&shown.charAt(0)<='\u065F')
                         shown="◌"+shown;
