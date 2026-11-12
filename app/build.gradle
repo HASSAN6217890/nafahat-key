@@ -1,6 +1,7 @@
-plugins {
-    id 'com.android.application'
-}
+plugins { id 'com.android.application' }
+def env=System.getenv()
+def ghRun=(env.GITHUB_RUN_NUMBER ?: '0').toInteger()
+def releaseReady=['NAFAHATKEY_STORE_FILE','NAFAHATKEY_STORE_PASSWORD','NAFAHATKEY_KEY_ALIAS','NAFAHATKEY_KEY_PASSWORD'].every { env[it] }
 android {
     namespace 'com.nafahat.key'
     compileSdk 35
@@ -8,14 +9,31 @@ android {
         applicationId 'com.nafahat.key'
         minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName '0.2.0'
+        versionCode 100 + ghRun
+        versionName '0.3.' + ghRun
+    }
+    signingConfigs {
+        if(releaseReady) {
+            production {
+                storeFile file(env.NAFAHATKEY_STORE_FILE)
+                storePassword env.NAFAHATKEY_STORE_PASSWORD
+                keyAlias env.NAFAHATKEY_KEY_ALIAS
+                keyPassword env.NAFAHATKEY_KEY_PASSWORD
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if(releaseReady) signingConfig signingConfigs.production
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    buildTypes {
-        release { minifyEnabled false }
-    }
+}
+gradle.taskGraph.whenReady { graph ->
+    if(graph.allTasks.any {it.path==':app:assembleRelease'} && !releaseReady)
+        throw new GradleException('Signed release requires the four NAFAHATKEY GitHub secrets.')
 }
