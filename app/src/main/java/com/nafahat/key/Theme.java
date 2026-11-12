@@ -85,7 +85,7 @@ public final class Theme {
     /** Gallery order: id, title. */
     public static final String[][] GALLERY = {
         {"nafahat", "نفحات داكن"}, {"light", "نفحات فاتح"}, {"rawda", "الروضة"}, {"makkah", "مكة"},
-        {"dark", "داكن"}, {"system", "حسب نظام الهاتف"}};
+        {"dark", "داكن محايد"}, {"system", "حسب نظام الهاتف"}};
 
     /** Resolves a stored theme id ("nafahat", "dark", "light", "system", "rawda", "makkah"). */
     public static Theme forId(Context context, String id) {

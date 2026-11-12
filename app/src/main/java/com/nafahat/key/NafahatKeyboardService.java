@@ -264,7 +264,14 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         int heightPct = resizing ? Math.round(rsHeightPct) : prefs.heightPercent();
         int liftDp = resizing ? Math.round(rsLiftDp) : prefs.liftDp();
         int liftPx = Math.round(liftDp * d);
-        int h = KeyboardView.computeHeight(this, layoutFor(arrowCached ? "ar_arrows" : "ar"), heightPct);
+        Layout sizing = layoutFor(arrowCached ? "ar_arrows" : "ar");
+        // Never let strip + keys + lift take more than 60% of the screen (matters most in landscape).
+        int cap = Math.round(getResources().getDisplayMetrics().heightPixels * 0.60f);
+        int stripPx = Math.round(46 * d);
+        while (heightPct > 50 && KeyboardView.computeHeight(this, sizing, heightPct) + liftPx + stripPx > cap) heightPct -= 2;
+        if (KeyboardView.computeHeight(this, sizing, heightPct) + liftPx + stripPx > cap)
+            liftPx = Math.max(0, cap - stripPx - KeyboardView.computeHeight(this, sizing, heightPct));
+        int h = KeyboardView.computeHeight(this, sizing, heightPct);
         // Reserve room above the strip so the tallest preview / long-press bubble never clips.
         float pct = heightPct / 100f;
         float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
@@ -508,13 +515,13 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     }
 
     @Override public void onMenuButton() {
-        if (resizing) { onResizeDone(); return; }
+        if (resizing) { cancelResize(); return; }
         if (handler.internalActive()) handler.endInternal(true);
         showPanel(panel == PANEL_KEYS ? PANEL_MENU : PANEL_KEYS);
     }
 
     @Override public void onCollapseButton() {
-        if (resizing) { onResizeDone(); return; }
+        if (resizing) { cancelResize(); return; }
         if (panel != PANEL_KEYS) { showPanel(PANEL_KEYS); return; }
         if (handler.moreSuggestions().size() > 3) { showPanel(PANEL_MORE); return; }
         requestHideSelf(0);
@@ -669,6 +676,9 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         rsLiftDp = 0;
         applySizes();
     }
+
+    /** ⊞ or ⌄ during resize: leave without saving (only «موافق» saves). */
+    private void cancelResize() { endResize(); }
 
     private void endResize() {
         resizing = false;

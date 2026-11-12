@@ -83,6 +83,8 @@ public final class KeyboardView extends View {
     private boolean swipeDelete = true;
     private int artStrength = 60;
     private final RectF area = new RectF();
+    /** Union of all key rectangles; touches far outside it (lift gap, side gaps) are ignored. */
+    private final RectF keysBounds = new RectF();
     private boolean previewOnly;
     private long animStart;
 
@@ -230,7 +232,9 @@ public final class KeyboardView extends View {
         float aw = W * widthPercent / 100f;
         float areaLeft = (W - aw) * offsetPercent / 100f, areaRight = areaLeft + aw;
         area.set(areaLeft, padTop - 2 * density, areaRight, H - padBottom + 2 * density);
-        boolean side = widthPercent < 95 && (offsetPercent <= 5 || offsetPercent >= 95) && W - aw >= 36 * density;
+        float gapL = areaLeft, gapR = W - areaRight;
+        boolean side = widthPercent < 95 && Math.max(gapL, gapR) >= 36 * density
+            && Math.min(gapL, gapR) < 12 * density;
         float unit = (areaRight - areaLeft - 2 * padH) / layout.units;
         float totalDp = layout.totalHeightDp();
         float scaleY = (H - padTop - padBottom) / (totalDp * density);
@@ -253,7 +257,7 @@ public final class KeyboardView extends View {
             y += rh;
         }
         if (side) {
-            boolean left = offsetPercent <= 5;
+            boolean left = gapR > gapL; // keys on the left, buttons in the right-hand gap
             float colLeft = left ? areaRight : 0;
             float colRight = left ? W : areaLeft;
             float mid = (padTop + H - padBottom) / 2f;
@@ -264,10 +268,17 @@ public final class KeyboardView extends View {
             keys.add(swapKey);
             keys.add(exitKey);
         }
+        keysBounds.setEmpty();
+        for (Key k : keys) {
+            if (keysBounds.isEmpty()) keysBounds.set(k.rect); else keysBounds.union(k.rect);
+        }
     }
 
     private Key nearestKey(float x, float y) {
         if (geometryDirty) computeGeometry();
+        float slop = 8 * density;
+        if (x < keysBounds.left - slop || x > keysBounds.right + slop
+            || y < keysBounds.top - slop || y > keysBounds.bottom + slop) return null;
         Key best = null;
         float bestD = Float.MAX_VALUE;
         for (Key k : keys) {
@@ -583,16 +594,13 @@ public final class KeyboardView extends View {
             };
             postDelayed(p.repeater, REPEAT_START_MS);
         } else if (k.type == Key.DELETE) {
-            // With swipe-to-delete-words on, a plain tap deletes on release so a swipe never eats a letter.
-            if (!swipeDelete) {
-                if (listener != null) listener.onDelete(0);
-                p.committed = true;
-            }
+            // Delete on touch-down (instant, no rollover surprises). If the finger then swipes left,
+            // the word selection simply starts from the new cursor position.
+            if (listener != null) listener.onDelete(0);
+            p.committed = true;
             p.repeater = new Runnable() {
                 @Override public void run() {
                     if (p.deleteSwipe) return;
-                    if (p.repeat == 0 && swipeDelete && listener != null) listener.onDelete(0);
-                    p.committed = true;
                     p.repeat++;
                     if (listener != null) listener.onDelete(p.repeat);
                     postDelayed(this, p.repeat > 15 ? REPEAT_MS * 3 : REPEAT_MS);
@@ -642,13 +650,13 @@ public final class KeyboardView extends View {
         }
         if (p.key.type == Key.DELETE && swipeDelete && p.repeat == 0) {
             float dx = p.downX - x;
-            if (!p.deleteSwipe && dx > 24 * density && dx > 1.5f * Math.abs(y - p.downY)) {
+            if (!p.deleteSwipe && dx > 40 * density && dx > 2f * Math.abs(y - p.downY)) {
                 p.deleteSwipe = true;
                 if (p.repeater != null) { removeCallbacks(p.repeater); p.repeater = null; }
             }
             if (p.deleteSwipe) {
-                int words = Math.max(0, (int) ((dx - 24 * density) / (28 * density)) + 1);
-                if (dx < 24 * density) words = 0;
+                int words = Math.max(0, (int) ((dx - 40 * density) / (28 * density)) + 1);
+                if (dx < 40 * density) words = 0;
                 if (words != p.deleteWords) {
                     p.deleteWords = words;
                     haptic();
@@ -692,7 +700,6 @@ public final class KeyboardView extends View {
         } else if (!p.committed) {
             switch (p.key.type) {
                 case Key.CHAR: commitChar(p); break;
-                case Key.DELETE: if (listener != null) listener.onDelete(0); break;
                 case Key.SPACE:
                     if (p.spaceSwipe) { if (listener != null) listener.onSpaceSwipe(); }
                     else if (!p.cursorMode && listener != null) listener.onKey(p.key, " ");

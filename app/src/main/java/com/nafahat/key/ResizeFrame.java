@@ -68,12 +68,12 @@ public final class ResizeFrame extends View {
         float hl = 44 * density, ht = 7 * density;
         // top / bottom bars, left / right bars
         bar(c, area.centerX(), area.top, hl, ht);
-        bar(c, area.centerX(), area.bottom, hl, ht);
+        bar(c, area.centerX(), bottomHandleY(), hl, ht);
         bar(c, area.left, area.centerY(), ht, hl);
         bar(c, area.right, area.centerY(), ht, hl);
         // ✥ move handle
         float cx = area.centerX(), cy = area.centerY() - 22 * density, rr = 24 * density;
-        fill.setColor(active == MOVE ? 0xFFE0A050 : Theme.GOLD);
+        fill.setColor(active == MOVE ? 0xCCC88338 : Theme.GOLD);
         c.drawCircle(cx, cy, rr, fill);
         Paint ic = icon;
         float a = 12 * density, h = 4 * density;
@@ -90,7 +90,7 @@ public final class ResizeFrame extends View {
         float bw = 104 * density, bh = 38 * density, gap = 10 * density, by = cy + rr + 14 * density;
         ok.set(cx + gap / 2f, by, cx + gap / 2f + bw, by + bh);
         reset.set(cx - gap / 2f - bw, by, cx - gap / 2f, by + bh);
-        fill.setColor(pressedButton == 1 ? 0xFFE0A050 : Theme.GOLD);
+        fill.setColor(pressedButton == 1 ? 0xCCC88338 : Theme.GOLD);
         c.drawRoundRect(ok, bh / 2f, bh / 2f, fill);
         fill.setColor(pressedButton == 2 ? 0x55FFFFFF : 0x33FFFFFF);
         c.drawRoundRect(reset, bh / 2f, bh / 2f, fill);
@@ -102,6 +102,9 @@ public final class ResizeFrame extends View {
         c.drawText("إعادة تعيين", reset.centerX(), base, text);
     }
 
+    /** The bottom handle sits a little inside the frame, away from the gesture-navigation edge. */
+    private float bottomHandleY() { return area.bottom - 14 * density; }
+
     private void bar(Canvas c, float cx, float cy, float w, float h) {
         tmp.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
         c.drawRoundRect(tmp, h / 2f, h / 2f, fill);
@@ -112,7 +115,7 @@ public final class ResizeFrame extends View {
         float cx = area.centerX(), cy = area.centerY() - 22 * density;
         if (Math.hypot(x - cx, y - cy) <= 34 * density) return MOVE;
         if (Math.abs(y - area.top) <= t && x > area.left && x < area.right) return TOP;
-        if (Math.abs(y - area.bottom) <= t && x > area.left && x < area.right) return BOTTOM;
+        if (Math.abs(y - bottomHandleY()) <= t && x > area.left && x < area.right) return BOTTOM;
         if (Math.abs(x - area.left) <= t) return LEFT;
         if (Math.abs(x - area.right) <= t) return RIGHT;
         if (area.contains(x, y)) return MOVE;

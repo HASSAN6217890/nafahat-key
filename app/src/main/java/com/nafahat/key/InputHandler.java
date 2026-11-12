@@ -244,6 +244,15 @@ public final class InputHandler {
         if (ic == null) return;
         emptyField = false;
         if (canCompose() && isWordText(text)) {
+            if (autoSpacePunctLatin && autoSpace && word.length() == 0 && text.length() == 1
+                && TextNorm.isLatinLetter(text.charAt(0))) {
+                // "nafahatsy.com", "x@gmail.com": a Latin letter right after "." inside a Latin token
+                // means it was not the end of a sentence, so the automatic space is taken back.
+                ic.deleteSurroundingText(1, 0);
+                if (belief > 0) setBelief(belief - 1);
+                if (shift == 1 && autoShifted) text = text.toLowerCase(Locale.US);
+            }
+            autoSpacePunctLatin = false;
             lastCorrection = null;
             autoSpace = false;
             spaceAfterWord = false;
@@ -263,6 +272,8 @@ public final class InputHandler {
         autoSpace = false;
         spaceAfterWord = false;
         boolean hadWord = word.length() > 0 && !word.toString().startsWith("#");
+        boolean latinToken = hadWord && TextNorm.isLatinWord(word.toString());
+        autoSpacePunctLatin = false;
         boolean correct = punct && text.charAt(0) != '.' && text.charAt(0) != ':';
         finishWord(text, correct);
         if (punct && hadWord && prefs.autoSpacePunct() && canCompose() && !email && !url) {
@@ -270,12 +281,15 @@ public final class InputHandler {
             ic.commitText(" ", 1);
             if (belief >= 0) setBelief(belief + 1);
             autoSpace = true;
+            autoSpacePunctLatin = latinToken && text.charAt(0) == '.';
             updateAutoCap();
         }
         afterCharShift();
     }
 
     private boolean spaceAfterWord;
+    /** The automatic space followed "." after a Latin word (may be a web or email address). */
+    private boolean autoSpacePunctLatin;
     private long lastSpaceTime;
 
     public void onSpace() {

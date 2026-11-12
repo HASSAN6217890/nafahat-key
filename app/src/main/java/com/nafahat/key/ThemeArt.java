@@ -1,5 +1,6 @@
 package com.nafahat.key;
 
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -19,9 +20,30 @@ public final class ThemeArt {
     private static final Path PATH = new Path();
     private static final RectF R = new RectF();
 
+    /** Small LRU of rendered art: drawing per frame is a single bitmap blit. */
+    private static final java.util.LinkedHashMap<String, Bitmap> CACHE =
+        new java.util.LinkedHashMap<String, Bitmap>(8, 0.75f, true) {
+            @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, Bitmap> e) { return size() > 6; }
+        };
+
     public static void draw(Canvas c, float w, float h, int art, int strength) {
-        if (art == 0 || strength <= 0 || w <= 0 || h <= 0) return;
-        float k = strength / 100f;
+        if (art == 0 || strength <= 0 || w < 1 || h < 1) return;
+        int iw = (int) w, ih = (int) h;
+        String key = art + ":" + strength + ":" + iw + "x" + ih;
+        Bitmap b = CACHE.get(key);
+        if (b == null) {
+            try {
+                b = Bitmap.createBitmap(iw, ih, Bitmap.Config.ARGB_8888);
+            } catch (OutOfMemoryError e) {
+                return;
+            }
+            render(new Canvas(b), iw, ih, art, strength / 100f);
+            CACHE.put(key, b);
+        }
+        c.drawBitmap(b, 0, 0, null);
+    }
+
+    private static void render(Canvas c, float w, float h, int art, float k) {
         if (art == 1) rawda(c, w, h, k); else if (art == 2) makkah(c, w, h, k);
     }
 
@@ -43,14 +65,14 @@ public final class ThemeArt {
         float drumTop = base - drumH;
         glow(c, cx, drumTop - domeH * 0.4f, h * 0.75f, Theme.GOLD, 0.10f * k);
         FILL.setStyle(Paint.Style.FILL);
-        FILL.setColor(alpha(0xFF2E9E62, 0.30f * k));
+        FILL.setColor(alpha(Theme.GREEN, 0.55f * k));
         c.drawRect(cx - dw / 2f, drumTop, cx + dw / 2f, base, FILL);
         PATH.reset();
         PATH.moveTo(cx - dw * 0.52f, drumTop);
         PATH.cubicTo(cx - dw * 0.66f, drumTop - domeH * 0.55f, cx - dw * 0.20f, drumTop - domeH * 0.82f, cx, drumTop - domeH);
         PATH.cubicTo(cx + dw * 0.20f, drumTop - domeH * 0.82f, cx + dw * 0.66f, drumTop - domeH * 0.55f, cx + dw * 0.52f, drumTop);
         PATH.close();
-        FILL.setColor(alpha(0xFF2E9E62, 0.38f * k));
+        FILL.setColor(alpha(Theme.GREEN, 0.70f * k));
         c.drawPath(PATH, FILL);
         LINE.setStyle(Paint.Style.STROKE);
         LINE.setStrokeCap(Paint.Cap.ROUND);
@@ -62,7 +84,7 @@ public final class ThemeArt {
         c.drawArc(R, 200, 220, false, LINE);
         // minaret
         float mx = cx + dw * 1.05f, mw = h * 0.05f, top = base - h * 0.78f;
-        FILL.setColor(alpha(0xFF2E9E62, 0.26f * k));
+        FILL.setColor(alpha(Theme.GREEN, 0.50f * k));
         c.drawRect(mx - mw / 2f, top, mx + mw / 2f, base, FILL);
         c.drawRect(mx - mw, base - h * 0.52f, mx + mw, base - h * 0.49f, FILL);
         PATH.reset();

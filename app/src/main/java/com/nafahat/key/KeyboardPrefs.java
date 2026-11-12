@@ -19,8 +19,22 @@ public final class KeyboardPrefs {
     public KeyboardPrefs(Context context) {
         this.context = context;
         store = context.getApplicationContext().getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        migrateLegacyOneHand();
     }
 
+    /** v0.3 stored one-handed mode as one value; copy it into both orientations once, then drop it. */
+    private void migrateLegacyOneHand() {
+        if (!store.contains("one_handed")) return;
+        int legacy = store.getInt("one_handed", 0);
+        SharedPreferences.Editor e = store.edit();
+        if (legacy == 1 || legacy == 2) {
+            for (String o : new String[]{"_p", "_l"}) {
+                if (!store.contains("width" + o)) e.putInt("width" + o, 84);
+                if (!store.contains("offset" + o)) e.putInt("offset" + o, legacy == 1 ? 0 : 100);
+            }
+        }
+        e.remove("one_handed").apply();
+    }
     /** Sizes are stored separately for portrait and landscape. */
     public boolean landscape() {
         return context.getResources().getConfiguration().orientation
@@ -48,22 +62,18 @@ public final class KeyboardPrefs {
     public int fontPercent() { return clamp(store.getInt("font_v3", 100), 85, 125); }
     public void setFontPercent(int v) { store.edit().putInt("font_v3", clamp(v, 85, 125)).apply(); }
     /** Width of the key area 55..100 percent of the screen, per orientation. */
-    public int widthPercent() { return clamp(store.getInt("width" + o(), legacyOneHand() != 0 ? 84 : 100), 55, 100); }
+    public int widthPercent() { return clamp(store.getInt("width" + o(), 100), 55, 100); }
     public void setWidthPercent(int v) { store.edit().putInt("width" + o(), clamp(v, 55, 100)).apply(); }
     /** Horizontal position of a narrowed keyboard: 0 left .. 100 right, per orientation. */
-    public int offsetPercent() {
-        int legacy = legacyOneHand() == 1 ? 0 : legacyOneHand() == 2 ? 100 : 50;
-        return clamp(store.getInt("offset" + o(), legacy), 0, 100);
-    }
+    public int offsetPercent() { return clamp(store.getInt("offset" + o(), 50), 0, 100); }
     public void setOffsetPercent(int v) { store.edit().putInt("offset" + o(), clamp(v, 0, 100)).apply(); }
     /** Lift above the bottom edge in dp, per orientation. */
     public int liftDp() { return clamp(store.getInt("lift" + o(), 0), 0, 160); }
     public void setLiftDp(int v) { store.edit().putInt("lift" + o(), clamp(v, 0, 160)).apply(); }
     public void resetSize() {
         store.edit().remove("height" + o()).remove("width" + o()).remove("offset" + o()).remove("lift" + o())
-            .putInt("one_handed", 0).putInt("height_v3", 100).apply();
+            .putInt("height_v3", 100).apply();
     }
-    private int legacyOneHand() { return clamp(store.getInt("one_handed", 0), 0, 2); }
 
     // Typing options (spec 0.4 section 2)
     public int longPressMs() { return clamp(store.getInt("long_press_ms", 300), 150, 800); }
@@ -130,9 +140,13 @@ public final class KeyboardPrefs {
     public void setAutoCorrect(boolean yes) { store.edit().putBoolean("auto_correct", yes).apply(); }
     /** 0 off, 1 left hand, 2 right hand — a preset of the resize mode. */
     public int oneHanded() {
-        if (widthPercent() >= 95) return 0;
-        int off = offsetPercent();
-        return off <= 5 ? 1 : off >= 95 ? 2 : 0;
+        int w = widthPercent();
+        if (w >= 95) return 0;
+        float free = 100 - w;                         // empty width in % of the screen
+        float gapLeft = free * offsetPercent() / 100f, gapRight = free - gapLeft;
+        if (gapRight >= 8 && gapLeft < 3) return 1;   // keys on the left
+        if (gapLeft >= 8 && gapRight < 3) return 2;   // keys on the right
+        return 0;
     }
     public void setOneHanded(int v) {
         if (v == 0) { setWidthPercent(100); setOffsetPercent(50); }
