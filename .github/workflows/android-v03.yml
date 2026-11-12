@@ -27,6 +27,11 @@ jobs:
           python3 tools/generate_lexicon_v03.py
       - name: Verify safeguards
         run: python3 tools/verify_keyboard_v03.py
+      - name: Pure Java layout and WhatsApp parser tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/core-tests"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/core-tests" app/src/main/java/com/nafahat/key/KeyboardLayout.java app/src/main/java/com/nafahat/key/WhatsAppParser.java tools/TestCore.java
+          java -cp "$RUNNER_TEMP/core-tests" com.nafahat.key.TestCore
       - name: Compile debug APK
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
