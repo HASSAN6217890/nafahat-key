@@ -64,9 +64,9 @@ public final class KeyboardLayout {
             } else {
                 rows.add(new Row(56,0,k("[",""),k("]",""),k("{",""),k("}",""),k("<",""),k(">",""),k("€",""),k("£",""),k("₺","")));
                 rows.add(new Row(56,0,k("~",""),k("^",""),k("|",""),k("\\",""),k("…",""),k("،",""),k("؛",""),k("؟",""),f("⌫","⌫",1.5f)));
-                rows.add(new Row(56,0,k(".",""),k(",",""),k("0",""),k("1",""),k("2",""),k("3",""),k("4",""),k("5",""),k("6","")));
+                rows.add(new Row(56,0,k("±",""),k("÷",""),k("×",""),k("§",""),k("°",""),k("©",""),k("®",""),k("™",""),k("✓","")));
             }
-            rows.add(new Row(56,0,f("ABC","حروف",1.6f),f(first?"=\\<":"?123",first?"=\\<":"?123",1.3f),
+            rows.add(new Row(56,0,f("ABC","حروف",1.6f),f(first?"symbols2":"symbols1",first?"2/2":"1/2",1.3f),
                 f("،","،",1f),f("space",arabic?"العربية":"English",4f),f(".",".",1f),f("↵","↵",1.5f)));
             return rows;
         }
@@ -106,8 +106,8 @@ public final class KeyboardLayout {
     }
     private static Row bottom(boolean arabic,String start) {
         return new Row(56,0,f(start,start,1.4f),f("lang",arabic?"EN":"عربي",1.2f),
-            f("،","،",.85f),f("space",arabic?"العربية ‹ ›":"English ‹ ›",4.2f),
-            f(".",".",.85f),f("↵","↵",1.5f));
+            new Key("،","،","َ",.85f,true,"ً","ُ","ٌ","ِ","ٍ","ّ","ْ"),f("space",arabic?"العربية ‹ ›":"English ‹ ›",4.2f),
+            new Key(".",".","",.85f,true,"؟","!","؛","…",":"),f("↵","↵",1.5f));
     }
     private KeyboardLayout(){}
 }
