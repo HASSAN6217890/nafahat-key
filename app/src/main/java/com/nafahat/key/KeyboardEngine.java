@@ -108,7 +108,11 @@ public final class KeyboardEngine {
         if(code.isEmpty())return;
         if(code.equals("،")||code.equals(".")||code.equals("!")||code.equals("?")||code.equals("؟")||
            code.equals("؛")||code.equals(":")||code.equals(";")||code.equals("\n")){
-            finalizeWord(code);return;
+            finalizeWord(code);
+            if(!arabic&&!caps&&prefs.autoCap()&&sentenceCap()&&
+               (code.equals(".")||code.equals("!")||code.equals("?")||code.equals("؟")))
+                {shift=true;changed();}
+            return;
         }
         if((code.equals("#")&&composing.length()==0||code.matches("[a-zA-Z\\u0621-\\u064A\\u0671]+"))&&mode.equals("letters")&&!sensitive){
             clearUndo();
@@ -197,6 +201,10 @@ public final class KeyboardEngine {
         finalizeWord("");
         // Arrow key events are more compatible with remote editors than guessed selection offsets.
         int key=delta<0?KeyEvent.KEYCODE_DPAD_LEFT:KeyEvent.KEYCODE_DPAD_RIGHT;
+        if(cursorEnd>=0){
+            cursorEnd=Math.max(0,cursorEnd+delta);
+            if(ic.setSelection(cursorEnd,cursorEnd))return;
+        }
         for(int i=0;i<Math.min(30,Math.abs(delta));i++)sendKey(ic,key);
     }
     private void enter(){
@@ -208,7 +216,11 @@ public final class KeyboardEngine {
         if(!forceNewline&&action!=EditorInfo.IME_ACTION_NONE&&action!=EditorInfo.IME_ACTION_UNSPECIFIED){
             ic.performEditorAction(action);
         }else sendKey(ic,KeyEvent.KEYCODE_ENTER);
+        if(!arabic&&!caps&&prefs.autoCap()&&sentenceCap())shift=true;
         changed();
+    }
+    private boolean sentenceCap(){
+        return editor!=null&&(editor.inputType&InputType.TYPE_TEXT_FLAG_CAP_SENTENCES)!=0;
     }
     private void sendKey(InputConnection ic,int code){
         ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,code));
