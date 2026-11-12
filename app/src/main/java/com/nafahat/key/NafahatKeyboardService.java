@@ -157,6 +157,19 @@ public final class NafahatKeyboardService extends InputMethodService
             library.recordUse(snippet.id);
         }
     }
+    @Override public void onSnippetPreviewAction(Snippet snippet,String action){
+        if(engine.isSensitive()||snippet==null)return;
+        if(action.equals("insert")){
+            engine.insertSnippet(snippet.text);library.recordUse(snippet.id);
+        }else if(action.equals("copy")){
+            ClipboardManager clipboard=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            if(clipboard!=null)clipboard.setPrimaryClip(ClipData.newPlainText(snippet.title,snippet.text));
+            Toast.makeText(this,"تم نسخ النص",Toast.LENGTH_SHORT).show();
+        }else if(action.equals("pin")){
+            library.togglePinned(snippet.id);
+            if(keyboard!=null)keyboard.setSnippets(library.getAll());
+        }
+    }
     @Override public void onFinishInputView(boolean finishingInput){
         super.onFinishInputView(finishingInput);
         if(keyboard!=null)keyboard.cancelPresses();
