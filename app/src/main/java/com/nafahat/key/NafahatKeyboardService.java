@@ -80,6 +80,47 @@ public final class NafahatKeyboardService extends InputMethodService implements 
 
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
+    private String versionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Belt and braces against the keyboard showing at the top of the screen: the IME window is
+     * full width, wraps its content and sits at the bottom; the input area and our view wrap too.
+     */
+    private void pinWindowToBottom() {
+        try {
+            Window w = getWindow() != null ? getWindow().getWindow() : null;
+            if (w == null) return;
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            w.setGravity(android.view.Gravity.BOTTOM);
+            View inputArea = w.findViewById(android.R.id.inputArea);
+            wrapAtBottom(inputArea);
+            if (root != null && root.getParent() instanceof View) wrapAtBottom((View) root.getParent());
+            wrapAtBottom(root);
+        } catch (RuntimeException ignored) { }
+    }
+
+    private static void wrapAtBottom(View v) {
+        if (v == null) return;
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        if (lp == null) return;
+        boolean changed = false;
+        if (lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) { lp.height = ViewGroup.LayoutParams.WRAP_CONTENT; changed = true; }
+        if (lp instanceof FrameLayout.LayoutParams && ((FrameLayout.LayoutParams) lp).gravity != android.view.Gravity.BOTTOM) {
+            ((FrameLayout.LayoutParams) lp).gravity = android.view.Gravity.BOTTOM;
+            changed = true;
+        } else if (lp instanceof LinearLayout.LayoutParams && ((LinearLayout.LayoutParams) lp).gravity != android.view.Gravity.BOTTOM) {
+            ((LinearLayout.LayoutParams) lp).gravity = android.view.Gravity.BOTTOM;
+            changed = true;
+        }
+        if (changed) v.setLayoutParams(lp);
+    }
+
     @Override public View onCreateInputView() {
         float d = getResources().getDisplayMetrics().density;
         root = new RootLayout(this);
@@ -135,6 +176,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
 
     @Override public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
+        pinWindowToBottom();
         if (root == null) return;
         resizing = false;
         selecting = false;
@@ -174,8 +216,6 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         int top = loc[1];
         root.getLocationInWindow(loc);
         int bottom = loc[1] + root.getHeight();
-        Window w = getWindow() != null ? getWindow().getWindow() : null;
-        if (w != null) bottom = Math.max(bottom, w.getDecorView().getHeight());
         outInsets.contentTopInsets = top;
         outInsets.visibleTopInsets = top;
         outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION;
@@ -186,7 +226,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private void applyPrefs() {
         theme = prefs.resolveTheme(this);
         if (numberRowCached != prefs.numberRow()) { layouts.clear(); numberRowCached = prefs.numberRow(); }
-        boolean globe = offerSwitching();
+        boolean globe = true; // the owner wants the 🌐 key always (tap = next keyboard, long-press = picker)
         if (globeCached != globe) { layouts.clear(); globeCached = globe; }
         int h = KeyboardView.computeHeight(this, layoutFor("ar"), prefs.heightPercent());
         // Reserve room above the strip so the tallest preview / long-press bubble never clips.
@@ -295,7 +335,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         cells.add(cell(C_UNDO, "تراجع", "↶"));
         cells.add(cell(C_SETTINGS, "الإعدادات", "⚙"));
         cells.add(cell(C_SWITCH_IME, "تبديل لوحة المفاتيح", "🌐"));
-        grid.setCells(cells, 3, null);
+        grid.setCells(cells, 3, "الإصدار " + versionName());
     }
 
     private void buildThemePanel() {
@@ -394,21 +434,9 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         return w == null ? null : w.getAttributes().token;
     }
 
-    private boolean offerSwitching() {
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= 28) return shouldOfferSwitchingToNextInputMethod();
-            android.view.inputmethod.InputMethodManager imm =
-                (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            android.os.IBinder t = windowToken();
-            return imm != null && t != null && imm.shouldOfferSwitchingToNextInputMethod(t);
-        } catch (RuntimeException e) {
-            return false;
-        }
-    }
-
     private void switchToNextKeyboard() {
         try {
-            if (android.os.Build.VERSION.SDK_INT >= 28) { switchToNextInputMethod(false); return; }
+            if (android.os.Build.VERSION.SDK_INT >= 28) { if (!switchToNextInputMethod(false)) showImePicker(); return; }
             android.view.inputmethod.InputMethodManager imm =
                 (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
             android.os.IBinder t = windowToken();
