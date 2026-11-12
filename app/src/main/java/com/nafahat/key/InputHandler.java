@@ -28,6 +28,10 @@ public final class InputHandler {
         void showShift(boolean shifted, boolean locked);
         void openLibraryWithQuery(String query);
         void runOnBackground(Runnable r);
+        /** «اسأل الإدارة»: opens WhatsApp to Nafahat with the question; the keyboard sends nothing itself. */
+        void askAdmin(String question);
+        /** A short hint for the staff member (e.g. a snippet's note). */
+        void hint(String text);
     }
 
     private static final int SEARCH = 1;
@@ -729,6 +733,15 @@ public final class InputHandler {
                     }
                 }
             }
+            if (!typed.startsWith("#")) {
+                // v0.5: a Nafahat library text whose keyword starts with the typed word (local match only).
+                Snippet kb = KbMatcher.best(snippets(), typed);
+                if (kb != null) {
+                    CandidateStrip.Item k = new CandidateStrip.Item("📋 " + kb.title, CandidateStrip.KB, kb);
+                    if (items.isEmpty()) items.add(new CandidateStrip.Item(typed, CandidateStrip.LITERAL, typed));
+                    if (items.size() >= 3) items.set(2, k); else items.add(k);
+                }
+            }
             ui.showStrip(items, false);
             return;
         }
@@ -782,8 +795,59 @@ public final class InputHandler {
             case CandidateStrip.ACTION:
                 if (item.data instanceof Runnable) ((Runnable) item.data).run();
                 break;
+            case CandidateStrip.KB:
+                insertKb((Snippet) item.data, false);
+                break;
             default:
         }
+    }
+
+    /** Long-press on a library suggestion inserts the long version. */
+    public void onStripItemLong(CandidateStrip.Item item) {
+        if (item.kind == CandidateStrip.KB) insertKb((Snippet) item.data, true);
+        else onStripItem(item);
+    }
+
+    /** wa / ig / fb / any — from the app being typed in. */
+    public String platform() { return KbMatcher.platformFor(info == null ? null : info.packageName); }
+
+    private void insertKb(Snippet s, boolean longText) {
+        if (sensitive || s == null) return;
+        if (internalKind != 0) endInternal(false);
+        boolean replaceWord = word.length() > 0;   // the keyword being typed is replaced by the text
+        Snippet x = s.withBody(s.bodyFor(platform(), longText));
+        if (s.note != null && !s.note.isEmpty()) ui.hint(s.note);
+        if (x.hasPlaceholders()) { startTemplate(x, replaceWord); return; }
+        doInsert(x, x.body, replaceWord);
+    }
+
+    /**
+     * «رد على رسالة»: the customer's message (read from the clipboard only on that tap) is matched
+     * locally; the top 3 texts are shown. Nothing is sent anywhere.
+     */
+    public void showReplies(String message) {
+        if (sensitive) return;
+        endInternal(false);
+        List<CandidateStrip.Item> items = new ArrayList<>();
+        List<Snippet> found = message == null ? new ArrayList<>() : KbMatcher.replies(snippets(), message, 3);
+        for (Snippet s : found) items.add(new CandidateStrip.Item("📋 " + s.title, CandidateStrip.KB, s));
+        if (found.isEmpty()) {
+            CandidateStrip.Item none = new CandidateStrip.Item(message == null || message.trim().isEmpty()
+                ? "انسخ رسالة الزبون أولاً" : "لا يوجد رد جاهز", CandidateStrip.INFO, null);
+            none.weight = 1.4f;
+            items.add(none);
+            if (message != null && !message.trim().isEmpty()) {
+                final String q = message.trim();
+                CandidateStrip.Item ask = new CandidateStrip.Item("اسأل الإدارة", CandidateStrip.ACTION, (Runnable) () -> {
+                    updateStrip();
+                    ui.askAdmin(q);
+                });
+                ask.strong = true;
+                items.add(ask);
+            }
+        }
+        items.add(new CandidateStrip.Item("إلغاء", CandidateStrip.ACTION, (Runnable) this::updateStrip));
+        ui.showStrip(items, true);
     }
 
     public void pickWord(String w, int weight) {
@@ -872,8 +936,15 @@ public final class InputHandler {
     }
 
     /** Inserts a library text (template fields are asked for first). */
+    /** Library panel «إدراج الطويل». */
+    public void insertSnippetLong(Snippet s) { insertKb(s, true); }
+
     public void insertSnippet(Snippet s) {
         if (sensitive || s == null) return;
+        if (!s.variants.isEmpty()) {
+            if (s.note != null && !s.note.isEmpty()) ui.hint(s.note);
+            s = s.withBody(s.bodyFor(platform(), false));
+        }
         boolean replaceWord = word.length() > 0 && word.charAt(0) == '#';
         if (s.hasPlaceholders()) {
             startTemplate(s, replaceWord);

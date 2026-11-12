@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static release checks run in CI before building NafahatKey 0.3."""
+"""Static release checks run in CI before building NafahatKey (0.3 rules + the 0.5 network rules)."""
 import re
 import sys
 from pathlib import Path
@@ -18,7 +18,17 @@ def check(cond, msg):
         errors.append(msg)
 
 # Permissions / privacy
-check("uses-permission" not in manifest, "manifest must not request any permission")
+# v0.5: exactly one permission, INTERNET (download of the Nafahat library); every other one stays forbidden.
+perms = re.findall(r'<uses-permission[^>]*android:name="([^"]+)"', manifest)
+check(perms == ["android.permission.INTERNET"], f"manifest must request exactly android.permission.INTERNET, found {perms}")
+check(manifest.count("uses-permission") == 1, "only one <uses-permission> element is allowed")
+check("uses-permission-sdk" not in manifest, "no uses-permission-sdk-23 either")
+check('android:networkSecurityConfig="@xml/network_security_config"' in manifest, "network security config missing")
+check('android:usesCleartextTraffic="false"' in manifest, "cleartext must stay off")
+nsc = (root / "app/src/main/res/xml/network_security_config.xml").read_text(encoding="utf-8")
+check('cleartextTrafficPermitted="false"' in nsc and 'src="system"' in nsc and 'src="user"' not in nsc,
+      "network security config: no cleartext, system CAs only")
+check("CAMERA" not in manifest and "RECEIVE_BOOT_COMPLETED" not in manifest, "no camera / boot permission")
 check('android:allowBackup="false"' in manifest, "allowBackup must be false")
 check("@xml/data_extraction_rules" in manifest, "dataExtractionRules missing")
 rules = (root / "app/src/main/res/xml/data_extraction_rules.xml").read_text(encoding="utf-8")
@@ -26,11 +36,29 @@ check(rules.count("<exclude") >= 10, "data extraction rules must exclude every d
 for name, text in java.items():
     check("android.util.Log" not in text and "Log." not in text, f"{name}: no logging allowed")
     check(not re.search(r"[٠-٩۰-۹]", text), f"{name}: Arabic-Indic digits are not allowed")
-    check("java.net" not in text and "HttpURLConnection" not in text, f"{name}: no networking")
+    if name != "KbApi.java":
+        check("java.net" not in text and "URLConnection" not in text and "javax.net" not in text and "Socket" not in text,
+              f"{name}: networking is allowed only in KbApi.java")
 check("keystore" not in gradle.lower() or "NAFAHATKEY_KEYSTORE_PATH" in gradle, "signing must come from env only")
 for p in root.rglob("*"):
     if p.suffix in (".jks", ".keystore", ".p12"):
         errors.append(f"keystore file must never be committed: {p}")
+
+# v0.5 KbApi: GET only, fixed host, no redirects, 15 s timeouts, nothing uploaded
+api = java.get("KbApi.java", "")
+check('HOST = "card.nafahatsy.com"' in api, "KbApi host must be hard-coded to card.nafahatsy.com")
+check("setInstanceFollowRedirects(false)" in api, "KbApi must not follow redirects")
+check(api.count("TIMEOUT_MS = 15000") == 1 and "setConnectTimeout(TIMEOUT_MS)" in api and "setReadTimeout(TIMEOUT_MS)" in api, "15 s timeouts")
+check('setRequestMethod("GET")' in api and "POST" not in api and "PUT" not in api and "getOutputStream" not in api
+      and "setDoOutput(true)" not in api, "KbApi is GET only and never writes a body")
+check(set(re.findall(r'setRequestProperty\("([^"]+)"', api)) <= {"User-Agent", "Accept"}, "no custom headers beyond User-Agent / Accept")
+check(re.findall(r'"(/kb/[^"]*)"', api) == ["/kb/v.json?ts=", "/kb/library."], "only /kb/v.json and /kb/library.<rev>.json")
+check("http://" not in api, "https only")
+sync = java.get("KbSync.java", "")
+check("sha256Hex(data).equals(sha)" in sync, "KbSync must verify sha256 from v.json")
+for name, text in java.items():
+    if name != "KbApi.java":
+        check("KbApi." not in text or name == "KbSync.java", f"{name}: only KbSync may call KbApi")
 
 # Arabic layout exactly as SwiftKey (spec section 2)
 rows = [
@@ -91,4 +119,4 @@ if errors:
     for e in errors:
         print(" -", e)
     sys.exit(1)
-print("NafahatKey 0.3 static checks passed.")
+print("NafahatKey static checks passed (0.3 rules + 0.5 network rules).")

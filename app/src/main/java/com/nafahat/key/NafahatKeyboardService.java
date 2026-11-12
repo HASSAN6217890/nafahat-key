@@ -23,7 +23,10 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Local-only Android IME: no logging, no network, no clipboard reads unless the user asks. */
+/**
+ * Android IME: no logging, no clipboard reads unless the user asks. The only network use (v0.5) is
+ * KbSync downloading the Nafahat library on its own thread; nothing typed is ever sent.
+ */
 public final class NafahatKeyboardService extends InputMethodService implements KeyboardView.Listener,
     ResizeFrame.Listener, CandidateStrip.Listener, GridPanel.Listener, LibraryPanel.Host, InputHandler.Ui {
 
@@ -31,7 +34,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         PANEL_EDIT = 4, PANEL_LIBRARY = 5, PANEL_MORE = 6;
 
     private static final int C_LIBRARY = 1, C_THEME = 2, C_RESIZE = 3, C_ONE_HAND = 4, C_EDIT = 5,
-        C_DIACRITICS = 6, C_LANGUAGE = 7, C_UNDO = 8, C_SETTINGS = 9, C_SWITCH_IME = 11;
+        C_DIACRITICS = 6, C_LANGUAGE = 7, C_UNDO = 8, C_SETTINGS = 9, C_SWITCH_IME = 11, C_REPLY = 12;
     private static final int C_BACK = 10;
     private static final int C_T_NAFAHAT = 21, C_T_DARK = 22, C_T_LIGHT = 23, C_T_SYSTEM = 24;
     private static final int C_H_LEFT = 31, C_H_RIGHT = 32, C_H_OFF = 33;
@@ -197,11 +200,31 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         handler.setPrefs(prefs);
         handler.setArabic(prefs.arabic());
         if (!restarting || panel == PANEL_LIBRARY) showPanel(PANEL_KEYS);
+        startLibrarySync();
         applyLayout(false);
         keyboard.setPreviewEnabled(!handler.isSensitive() && prefs.keyPopups());
         keyboard.setEnterAction(handler.enterAction());
         keyboard.setShift(handler.shifted(), false);
         handler.startInputView();
+    }
+
+    private final java.util.concurrent.atomic.AtomicBoolean syncing = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** v0.5: if the last check is older than 30 minutes, download the Nafahat library (own thread). */
+    private void startLibrarySync() {
+        if (!syncing.compareAndSet(false, true)) return;
+        final Context app = getApplicationContext();
+        Thread t = new Thread(() -> {
+            try {
+                KbSyncJob.schedule(app);
+                KbSync.maybeSync(app, 30L * 60 * 1000);
+            } catch (RuntimeException ignored) {
+            } finally {
+                syncing.set(false);
+            }
+        }, "nafahatkey-kb");
+        t.setPriority(Thread.MIN_PRIORITY);
+        t.start();
     }
 
     @Override public void onFinishInputView(boolean finishingInput) {
@@ -363,7 +386,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         for (int id : prefs.menuOrder(MenuItems.defaults())) {
             String title = id == C_LANGUAGE ? (handler.arabic() ? "English" : "العربية") : MenuItems.title(id);
             GridPanel.Cell c = cell(id, title, MenuItems.glyph(id));
-            if (id == C_LIBRARY) c.enabled = !handler.isSensitive();
+            if (id == C_LIBRARY || id == C_REPLY) c.enabled = !handler.isSensitive();
             if (id == C_ONE_HAND) c.active = prefs.oneHanded() != 0;
             if (id == C_DIACRITICS) c.active = diacriticsPage;
             cells.add(c);
@@ -514,6 +537,8 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         if (panel == PANEL_MORE) showPanel(PANEL_KEYS);
     }
 
+    @Override public void onStripItemLong(CandidateStrip.Item item) { handler.onStripItemLong(item); }
+
     @Override public void onMenuButton() {
         if (resizing) { cancelResize(); return; }
         if (handler.internalActive()) handler.endInternal(true);
@@ -532,6 +557,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         InputConnection ic = getCurrentInputConnection();
         switch (c.id) {
             case C_LIBRARY: library.setQuery(""); showPanel(PANEL_LIBRARY); break;
+            case C_REPLY: showPanel(PANEL_KEYS); replyToMessage(); break;
             case C_THEME: showPanel(PANEL_THEME); break;
             case C_RESIZE: startResize(); break;
             case C_ONE_HAND: showPanel(PANEL_ONE_HAND); break;
@@ -723,7 +749,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
             LibraryDb db = LibraryDb.get(app);
             long target = collectionId;
             if (target >= 0) {
-                for (SnippetCollection c : db.collections(false)) if (c.id == target && c.isBuiltin()) target = -1;
+                for (SnippetCollection c : db.collections(false)) if (c.id == target && c.isReadOnly()) target = -1;
             }
             if (target < 0) target = db.addCollection("نصوص محفوظة");
             Snippet s = new Snippet();
@@ -738,6 +764,43 @@ public final class NafahatKeyboardService extends InputMethodService implements 
                 library.refresh();
             });
         });
+    }
+
+    /** «رد على رسالة»: reads the clipboard only because the user pressed it; matching is local. */
+    private void replyToMessage() {
+        if (handler.isSensitive()) return;
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        CharSequence text = null;
+        try {
+            ClipData clip = cm == null ? null : cm.getPrimaryClip();
+            if (clip != null && clip.getItemCount() > 0) text = clip.getItemAt(0).coerceToText(this);
+        } catch (RuntimeException ignored) { }
+        String msg = text == null ? null : text.toString();
+        if (msg != null && msg.length() > 2000) msg = msg.substring(0, 2000);
+        handler.showReplies(msg);
+    }
+
+    @Override public void askAdmin(String question) {
+        // Opens WhatsApp (or the browser) to Nafahat with the question prefilled; the user sends it there.
+        String q = question.length() > 700 ? question.substring(0, 700) + "…" : question;
+        String text = "سؤال من كيبورد نفحات — ما الرد المناسب على هذه الرسالة؟\n\n" + q;
+        Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/963994791692?text=" + android.net.Uri.encode(text)));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            requestHideSelf(0);
+            startActivity(i);
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "تعذّر فتح واتساب", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override public void hint(String text) {
+        if (text != null && !text.isEmpty()) Toast.makeText(this, "تذكير: " + text, Toast.LENGTH_LONG).show();
+    }
+
+    @Override public void insertSnippetLong(Snippet s) {
+        showPanel(PANEL_KEYS);
+        handler.insertSnippetLong(s);
     }
 
     @Override public void togglePin(Snippet s) {
@@ -756,7 +819,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         if (!chips && items.isEmpty() && !handler.internalActive()) {
             List<CandidateStrip.Item> shortcuts = new ArrayList<>();
             for (int id : prefs.stripShortcuts()) {
-                if (id == C_LIBRARY && handler.isSensitive()) continue;
+                if ((id == C_LIBRARY || id == C_REPLY) && handler.isSensitive()) continue;
                 final int cid = id;
                 shortcuts.add(new CandidateStrip.Item(MenuItems.glyph(id) + " " + MenuItems.title(id), CandidateStrip.ACTION,
                     (Runnable) () -> onCell(cell(cid, MenuItems.title(cid), null))));

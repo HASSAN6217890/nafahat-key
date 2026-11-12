@@ -8,9 +8,9 @@ public final class MenuItems {
     private MenuItems() { }
 
     public static final int LIBRARY = 1, THEME = 2, RESIZE = 3, ONE_HAND = 4, EDIT = 5, DIACRITICS = 6,
-        LANGUAGE = 7, UNDO = 8, SETTINGS = 9, SWITCH_IME = 11;
+        LANGUAGE = 7, UNDO = 8, SETTINGS = 9, SWITCH_IME = 11, REPLY = 12;
 
-    public static final int[] IDS = {LIBRARY, THEME, RESIZE, ONE_HAND, EDIT, DIACRITICS, LANGUAGE, UNDO, SETTINGS, SWITCH_IME};
+    public static final int[] IDS = {LIBRARY, REPLY, THEME, RESIZE, ONE_HAND, EDIT, DIACRITICS, LANGUAGE, UNDO, SETTINGS, SWITCH_IME};
 
     public static List<Integer> defaults() {
         List<Integer> out = new ArrayList<>();
@@ -21,6 +21,7 @@ public final class MenuItems {
     public static String title(int id) {
         switch (id) {
             case LIBRARY: return "النصوص";
+            case REPLY: return "رد على رسالة";
             case THEME: return "المظهر";
             case RESIZE: return "تغيير الحجم";
             case ONE_HAND: return "بيد واحدة";
@@ -37,6 +38,7 @@ public final class MenuItems {
     public static String glyph(int id) {
         switch (id) {
             case LIBRARY: return "📋";
+            case REPLY: return "💬";
             case THEME: return "🎨";
             case RESIZE: return "↕";
             case ONE_HAND: return "✋";

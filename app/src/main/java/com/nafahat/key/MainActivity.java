@@ -42,6 +42,7 @@ public final class MainActivity extends Activity {
     private CandidateStrip previewStrip;
     private TextView statusText;
     private TextView learnedText;
+    private TextView kbStatus, kbLink;
     private CheckBox includeDictionary;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -61,6 +62,8 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         updateStatus();
+        updateKbStatus();
+        KbSyncJob.schedule(getApplicationContext());
     }
 
     @Override protected void onDestroy() {
@@ -87,7 +90,7 @@ public final class MainActivity extends Activity {
         title.setGravity(android.view.Gravity.CENTER);
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
         TextView sub = UiKit.text(this, "الإصدار " + versionName()
-            + " • يعمل على هذا الجهاز فقط، بلا إنترنت، ولا يسجّل ما تكتبه.", 13, false);
+            + " • لا يسجّل ما تكتبه ولا يرسله. الإنترنت لتنزيل مكتبة نفحات فقط.", 13, false);
         sub.setGravity(android.view.Gravity.CENTER);
         sub.setTextColor(Color.DKGRAY);
         content.addView(sub, new LinearLayout.LayoutParams(-1, -2));
@@ -264,6 +267,59 @@ public final class MainActivity extends Activity {
         lib.setOnClickListener(v -> startActivity(new Intent(this, LibraryActivity.class)));
         content.addView(lib, new LinearLayout.LayoutParams(-1, UiKit.dp(this, 46)));
 
+        // v0.5 central library
+        section("مكتبة نفحات");
+        note("نصوص نفحات المعتمدة تنزل من إدارة نفحات (card.nafahatsy.com) كل 6 ساعات وعند فتح لوحة المفاتيح. "
+            + "تنزيل فقط: لا يُرسل الكيبورد أي شيء مما تكتبه. النصوص الواردة من الإدارة لا تُعدَّل على الهاتف.");
+        kbStatus = UiKit.text(this, "", 13, false);
+        content.addView(kbStatus);
+        Button syncNow = UiKit.button(this, "زامن الآن");
+        syncNow.setOnClickListener(v -> {
+            kbStatus.setText("جارٍ التنزيل…");
+            final Context app = getApplicationContext();
+            worker.execute(() -> {
+                KbSync.run(app, false);
+                main.post(this::updateKbStatus);
+            });
+        });
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, UiKit.dp(this, 44));
+        slp.topMargin = UiKit.dp(this, 6);
+        content.addView(syncNow, slp);
+        kbLink = UiKit.text(this, "", 13, false);
+        LinearLayout.LayoutParams klp = new LinearLayout.LayoutParams(-1, -2);
+        klp.topMargin = UiKit.dp(this, 10);
+        content.addView(kbLink, klp);
+        EditText keyField = new EditText(this);
+        keyField.setHint("رمز ربط نصوص الفريق (من إدارة نفحات)");
+        keyField.setSingleLine(true);
+        keyField.setTextDirection(View.TEXT_DIRECTION_LTR);
+        keyField.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        keyField.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        content.addView(keyField, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout linkRow = row();
+        linkRow.addView(UiKit.button(this, "ربط"), weight());
+        linkRow.addView(UiKit.secondary(this, "إلغاء الربط"), weight());
+        linkRow.getChildAt(0).setOnClickListener(v -> {
+            String k = keyField.getText().toString();
+            keyField.setText("");
+            EnrollActivity.link(this, k, null);
+            main.postDelayed(this::updateKbStatus, 300);
+            main.postDelayed(this::updateKbStatus, 8000);
+        });
+        linkRow.getChildAt(1).setOnClickListener(v -> new AlertDialog.Builder(this)
+            .setMessage("إلغاء الربط يمسح رمز الفريق ونصوص الفريق من هذا الهاتف. النصوص العامة تبقى.")
+            .setNegativeButton("إلغاء", null)
+            .setPositiveButton("إلغاء الربط", (d, w) -> {
+                final Context app = getApplicationContext();
+                worker.execute(() -> {
+                    KbSync.unlink(app);
+                    main.post(this::updateKbStatus);
+                });
+            }).show());
+        content.addView(linkRow, new LinearLayout.LayoutParams(-1, UiKit.dp(this, 46)));
+        updateKbStatus();
+
         // Backup
         section("التصدير والاستيراد");
         note("ملف محلي يحوي المجموعات والنصوص والإعدادات، لنقلها إلى هاتف آخر أو لموظف جديد.");
@@ -279,8 +335,9 @@ public final class MainActivity extends Activity {
         content.addView(backup, new LinearLayout.LayoutParams(-1, UiKit.dp(this, 46)));
 
         section("الخصوصية");
-        note("لا تملك لوحة المفاتيح صلاحية الإنترنت، ولا ترسل شيئاً خارج الجهاز. في حقول كلمات المرور والحقول الحساسة "
-            + "لا تظهر معاينة ولا اقتراحات ولا مكتبة، ولا تتعلّم شيئاً. ولا تقرأ الحافظة إلا عند ضغط «حفظ المنسوخ».");
+        note("صلاحية الإنترنت تُستعمل لشيء واحد: تنزيل مكتبة نفحات من card.nafahatsy.com. لا يُرسل الكيبورد أي حرف مما تكتبه "
+            + "ولا أي معرّف للجهاز. في حقول كلمات المرور والحقول الحساسة لا تظهر معاينة ولا اقتراحات ولا مكتبة، ولا تتعلّم شيئاً. "
+            + "ولا تقرأ الحافظة إلا عند ضغط «حفظ المنسوخ» أو «رد على رسالة». «اسأل الإدارة» يفتح واتساب برسالتك لتُرسلها أنت.");
         updateStatus();
         updateLearnedCount();
     }
@@ -323,6 +380,26 @@ public final class MainActivity extends Activity {
             : enabled ? "الحالة: مفعّلة، لكنها غير مختارة. اضغط «اختيار لوحة المفاتيح»."
             : "الحالة: غير مفعّلة بعد. اضغط «تفعيل لوحة المفاتيح» ثم فعّل «كيبورد نفحات».");
         statusText.setTextColor(selected ? UiKit.GREEN : UiKit.GOLD);
+    }
+
+    private void updateKbStatus() {
+        if (kbStatus == null) return;
+        KbSync.Status st = KbSync.status(this);
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.US);
+        StringBuilder b = new StringBuilder();
+        b.append("الحالة: ").append(KbSync.describe(st.code));
+        b.append("\nآخر مزامنة ناجحة: ").append(st.lastOk > 0 ? f.format(new java.util.Date(st.lastOk)) : "—");
+        b.append("\nرقم النسخة: ").append(st.rev > 0 ? String.valueOf(st.rev) : "—");
+        kbStatus.setText(b.toString());
+        kbStatus.setTextColor(st.code == KbSync.OK ? UiKit.GREEN : st.code == KbSync.NEVER ? Color.DKGRAY : UiKit.GOLD);
+        if (kbLink == null) return;
+        String link;
+        if (!KbCrypto.linked(this)) link = "نصوص الفريق: الهاتف غير مربوط (تظهر النصوص العامة فقط).";
+        else if (st.team == KbSync.TEAM_ACTIVE) link = "نصوص الفريق: مربوط ومفعّل.";
+        else if (st.team == KbSync.TEAM_WRONG_KEY) link = "نصوص الفريق: رمز الربط لا يطابق مكتبة نفحات — اطلب رمزاً جديداً.";
+        else if (st.team == KbSync.TEAM_EMPTY) link = "نصوص الفريق: مربوط، ولا توجد نصوص فريق منشورة بعد.";
+        else link = "نصوص الفريق: مربوط، بانتظار أول مزامنة.";
+        kbLink.setText(link);
     }
 
     private void updateLearnedCount() {

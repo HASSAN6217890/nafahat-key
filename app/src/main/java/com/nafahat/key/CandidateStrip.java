@@ -27,6 +27,8 @@ public final class CandidateStrip extends View {
     public static final int INFO = 5;
     public static final int PHRASE = 6;
     public static final int NEXT = 7;
+    /** A text from the Nafahat library matched by keyword: tap = short, long-press = long version. */
+    public static final int KB = 8;
 
     public static final class Item {
         public final String text;
@@ -46,6 +48,8 @@ public final class CandidateStrip extends View {
         void onStripItem(Item item);
         void onMenuButton();
         void onCollapseButton();
+        /** Long-press on a library suggestion (KB). */
+        default void onStripItemLong(Item item) { onStripItem(item); }
     }
 
     private final float density;
@@ -66,6 +70,16 @@ public final class CandidateStrip extends View {
     private boolean menuEnabled = true;
     private int pressed = -3; // -1 menu, -2 collapse, >=0 slot
     private int heightPx;
+    private boolean longFired;
+    private final Runnable longPress = () -> {
+        if (pressed < 0 || pressed >= slots.size() || listener == null) return;
+        Item it = slots.get(pressed);
+        longFired = true;
+        pressed = -3;
+        invalidate();
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        listener.onStripItemLong(it);
+    };
 
     public CandidateStrip(Context context) {
         super(context);
@@ -233,17 +247,21 @@ public final class CandidateStrip extends View {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 pressed = hit(e.getX());
+                longFired = false;
+                removeCallbacks(longPress);
+                if (pressed >= 0 && slots.get(pressed).kind == KB) postDelayed(longPress, 450);
                 if (pressed != -3) performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
                 invalidate();
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if (hit(e.getX()) != pressed) { pressed = -3; invalidate(); }
+                if (hit(e.getX()) != pressed) { pressed = -3; removeCallbacks(longPress); invalidate(); }
                 return true;
             case MotionEvent.ACTION_UP: {
                 int p = pressed;
                 pressed = -3;
+                removeCallbacks(longPress);
                 invalidate();
-                if (listener == null) return true;
+                if (listener == null || longFired) return true;
                 if (p == -1) listener.onMenuButton();
                 else if (p == -2) listener.onCollapseButton();
                 else if (p >= 0 && p < slots.size()) listener.onStripItem(slots.get(p));
@@ -251,6 +269,7 @@ public final class CandidateStrip extends View {
             }
             case MotionEvent.ACTION_CANCEL:
                 pressed = -3;
+                removeCallbacks(longPress);
                 invalidate();
                 return true;
             default:

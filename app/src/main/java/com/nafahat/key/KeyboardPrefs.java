@@ -12,7 +12,7 @@ import java.util.List;
 public final class KeyboardPrefs {
     private static final String PREF = "nafahatkey_keyboard_settings_v2";
     public static final List<String> DEFAULT_TYPES = Arrays.asList(
-        "واتساب", "إنستغرام قصير", "رد", "أسعار", "عنوان/روابط", "أخرى");
+        "واتساب", "إنستغرام قصير", "فيسبوك", "رد", "أسعار", "عنوان/روابط", "روابط", "أخرى");
     private final SharedPreferences store;
     private final Context context;
 
@@ -109,7 +109,7 @@ public final class KeyboardPrefs {
     }
     public void setMenuOrder(List<Integer> ids) { putIntList("menu_order", ids); }
     public List<Integer> stripShortcuts() {
-        if (!store.contains("strip_shortcuts")) return new ArrayList<>(Arrays.asList(1, 5));
+        if (!store.contains("strip_shortcuts")) return new ArrayList<>(Arrays.asList(1, 12, 5));
         return intList("strip_shortcuts");
     }
     public void setStripShortcuts(List<Integer> ids) { putIntList("strip_shortcuts", ids); }

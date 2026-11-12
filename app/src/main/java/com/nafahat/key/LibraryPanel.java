@@ -17,12 +17,14 @@ import java.util.List;
 
 /**
  * The library inside the keyboard (replaces the keys, the top strip stays):
- * search · collection chips · type chips · «الأحدث» then «المثبّتة» then the rest.
+ * search · trip / collection chips («معلوماتنا» first, the current trip ★) · type chips ·
+ * «الأحدث» then «المثبّتة» then the rest. Texts from the Nafahat administration carry «من الإدارة».
  * Tap inserts and closes; long-press opens a full preview with insert / copy / pin.
  */
 public final class LibraryPanel extends FrameLayout {
     public interface Host {
         void insertSnippet(Snippet s);
+        void insertSnippetLong(Snippet s);
         void copySnippet(Snippet s);
         void startLibrarySearch();
         void saveClipboardTo(long collectionId);
@@ -175,14 +177,18 @@ public final class LibraryPanel extends FrameLayout {
         cchips.add(chip("الكل", selectedCollection < 0, v -> { selectedCollection = -1; refresh(); }));
         for (SnippetCollection c : cols) {
             final long id = c.id;
-            cchips.add(chip(c.name, c.id == selectedCollection, v -> { selectedCollection = id; refresh(); }));
+            String label = c.isServer() && c.current ? "★ " + c.name : c.name;
+            TextView ch = chip(label, c.id == selectedCollection, v -> { selectedCollection = id; refresh(); });
+            if (c.isServer() && c.current) ch.setContentDescription(c.name + "، الرحلة الحالية");
+            cchips.add(ch);
         }
         column.addView(chipRow(cchips));
 
         // types
         List<TextView> tchips = new ArrayList<>();
         tchips.add(chip("كل الأنواع", selectedType == null, v -> { selectedType = null; refresh(); }));
-        List<String> types = prefs != null ? prefs.snippetTypes() : KeyboardPrefs.DEFAULT_TYPES;
+        List<String> types = new ArrayList<>(prefs != null ? prefs.snippetTypes() : KeyboardPrefs.DEFAULT_TYPES);
+        for (Snippet s : all) if (s.type != null && !types.contains(s.type)) types.add(s.type);   // e.g. «فيسبوك»، «روابط» from the server
         for (String t : types) {
             tchips.add(chip(t, t.equals(selectedType), v -> { selectedType = t; refresh(); }));
         }
@@ -284,6 +290,17 @@ public final class LibraryPanel extends FrameLayout {
         body.setEllipsize(TextUtils.TruncateAt.END);
         body.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
         texts.addView(body);
+        if (s.isServer() || (s.note != null && !s.note.isEmpty())) {
+            TextView meta = new TextView(ctx);
+            String m = s.isServer() ? "من الإدارة" : "";
+            if (s.note != null && !s.note.isEmpty()) m += (m.isEmpty() ? "" : " · ") + s.note;
+            meta.setText(m);
+            meta.setTextSize(11);
+            meta.setTextColor(theme.accent);
+            meta.setSingleLine(true);
+            meta.setEllipsize(TextUtils.TruncateAt.END);
+            texts.addView(meta);
+        }
         card.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         card.setContentDescription(s.title + "، " + s.body);
@@ -314,6 +331,15 @@ public final class LibraryPanel extends FrameLayout {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextColor(theme.cardText);
         box.addView(title);
+        if (s.isServer() || (s.note != null && !s.note.isEmpty())) {
+            TextView meta = new TextView(ctx);
+            String m = s.isServer() ? "من الإدارة" : "";
+            if (s.note != null && !s.note.isEmpty()) m += (m.isEmpty() ? "" : " · ") + "تذكير: " + s.note;
+            meta.setText(m);
+            meta.setTextSize(12);
+            meta.setTextColor(theme.accent);
+            box.addView(meta);
+        }
         ScrollView sv = new ScrollView(ctx);
         TextView body = new TextView(ctx);
         body.setText(s.body);
@@ -327,6 +353,9 @@ public final class LibraryPanel extends FrameLayout {
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         buttons.addView(button("إدراج", true, v -> { removePreview(); if (host != null) host.insertSnippet(s); }), weight());
+        if (s.hasLong()) {
+            buttons.addView(button("الطويل", false, v -> { removePreview(); if (host != null) host.insertSnippetLong(s); }), weight());
+        }
         buttons.addView(button("نسخ", false, v -> { removePreview(); if (host != null) host.copySnippet(s); }), weight());
         buttons.addView(button(s.pinned ? "إلغاء التثبيت" : "تثبيت", false, v -> {
             removePreview();

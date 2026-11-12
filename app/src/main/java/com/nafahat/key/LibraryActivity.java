@@ -101,7 +101,7 @@ public final class LibraryActivity extends Activity {
         LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(-1, -2);
         nlp.topMargin = UiKit.dp(this, 16);
         content.addView(name, nlp);
-        if (!c.isBuiltin()) {
+        if (!c.isReadOnly()) {
             LinearLayout actions = UiKit.horizontal(this);
             Button rename = UiKit.secondary(this, "إعادة التسمية");
             rename.setOnClickListener(v -> askText("إعادة تسمية المجموعة", "", c.name, n -> { db.renameCollection(c.id, n); render(); }));
@@ -126,12 +126,12 @@ public final class LibraryActivity extends Activity {
             row.setBackground(UiKit.rounded(UiKit.SURFACE, 12, this));
             UiKit.pad(row, this, 10, 8);
             TextView handle = UiKit.text(this, "≡", 22, true);
-            handle.setTextColor(c.isBuiltin() ? Color.TRANSPARENT : Color.GRAY);
+            handle.setTextColor(c.isReadOnly() ? Color.TRANSPARENT : Color.GRAY);
             handle.setGravity(Gravity.CENTER);
             handle.setContentDescription("اسحب للترتيب");
             row.addView(handle, new LinearLayout.LayoutParams(UiKit.dp(this, 32), UiKit.dp(this, 40)));
             LinearLayout texts = UiKit.vertical(this);
-            TextView t = UiKit.text(this, (s.pinned ? "★ " : "") + s.title + "  ·  " + s.type, 15, true);
+            TextView t = UiKit.text(this, (s.pinned ? "★ " : "") + s.title + "  ·  " + s.type + (s.isServer() ? "  ·  من الإدارة" : ""), 15, true);
             t.setSingleLine(true);
             t.setEllipsize(TextUtils.TruncateAt.END);
             texts.addView(t);
@@ -150,7 +150,7 @@ public final class LibraryActivity extends Activity {
             LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
             rlp.setMargins(0, UiKit.dp(this, 4), 0, UiKit.dp(this, 4));
             row.setLayoutParams(rlp);
-            list.addRow(row, c.isBuiltin() ? null : handle, s.id);
+            list.addRow(row, c.isReadOnly() ? null : handle, s.id);
         }
         content.addView(list, new LinearLayout.LayoutParams(-1, -2));
         if (items.isEmpty()) {
@@ -158,7 +158,7 @@ public final class LibraryActivity extends Activity {
             empty.setTextColor(Color.GRAY);
             content.addView(empty);
         }
-        if (!c.isBuiltin()) {
+        if (!c.isReadOnly()) {
             Button add = UiKit.button(this, "+ نص جديد");
             add.setOnClickListener(v -> {
                 Snippet s = new Snippet();
@@ -232,8 +232,10 @@ public final class LibraryActivity extends Activity {
     }
 
     private void editDialog(Snippet s, SnippetCollection c) {
-        if (s.isBuiltin()) {
-            new AlertDialog.Builder(this).setTitle(s.title).setMessage(s.body)
+        if (s.isReadOnly()) {
+            new AlertDialog.Builder(this).setTitle(s.title)
+                .setMessage((s.isServer() ? "من الإدارة — لا يُعدَّل على الهاتف.\n\n" : "") + s.body
+                    + (s.note != null && !s.note.isEmpty() ? "\n\nتذكير: " + s.note : ""))
                 .setNegativeButton("إغلاق", null)
                 .setPositiveButton(s.pinned ? "إلغاء التثبيت" : "تثبيت", (d, w) -> { db.setPinned(s.id, !s.pinned); render(); })
                 .show();
@@ -271,7 +273,7 @@ public final class LibraryActivity extends Activity {
         List<SnippetCollection> userCols = new ArrayList<>();
         List<String> colNames = new ArrayList<>();
         for (SnippetCollection x : db.collections(true)) {
-            if (x.isBuiltin()) continue;
+            if (x.isReadOnly()) continue;
             userCols.add(x);
             colNames.add(x.name);
         }
@@ -314,7 +316,7 @@ public final class LibraryActivity extends Activity {
     private void orderCollectionsDialog() {
         DragList list = new DragList(this);
         for (SnippetCollection c : db.collections(true)) {
-            if (c.isBuiltin()) continue;
+            if (c.isReadOnly()) continue;
             LinearLayout row = UiKit.horizontal(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setBackground(UiKit.rounded(UiKit.SURFACE, 10, this));

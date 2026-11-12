@@ -14,8 +14,8 @@ android {
         applicationId 'com.nafahat.key'
         minSdk 26
         targetSdk 34
-        versionCode Integer.parseInt(System.getenv('NAFAHATKEY_VERSION_CODE') ?: '104')
-        versionName System.getenv('NAFAHATKEY_VERSION_NAME') ?: '0.4.0'
+        versionCode Integer.parseInt(System.getenv('NAFAHATKEY_VERSION_CODE') ?: '105')
+        versionName System.getenv('NAFAHATKEY_VERSION_NAME') ?: '0.5.0'
     }
     signingConfigs {
         if (hasSigning) {
