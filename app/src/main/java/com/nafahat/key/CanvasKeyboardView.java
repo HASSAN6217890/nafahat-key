@@ -1,6 +1,7 @@
 package com.nafahat.key;
 
 import android.content.Context;
+import android.animation.ValueAnimator;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -43,6 +44,8 @@ public final class CanvasKeyboardView extends View {
     private List<Snippet> snippets=Collections.emptyList();
     private int libraryPage=0, selectedGroup=0, selectedType=0, oneHanded=0;
     private String enterLabel="↵";
+    private ValueAnimator layoutAnimator;
+    private float transitionAlpha=1f;
     private int cachedHeight=-1; private boolean cachedNumbers=false;
     private List<String> groups=Collections.emptyList();
     private final String[] types={"الكل","واتساب","إنستغرام قصير","رد","أسعار","عنوان/روابط","أخرى"};
@@ -80,7 +83,18 @@ public final class CanvasKeyboardView extends View {
         if(cachedHeight!=height||cachedNumbers!=numbers){cachedHeight=height;cachedNumbers=numbers;refresh();}
         else invalidate();
     }
-    public void setMode(String value){if(!mode.equals(value)){mode=value;refresh();}}
+    public void setMode(String value){
+        if(!mode.equals(value)){mode=value;refresh();animateLayout();}
+    }
+    private void animateLayout(){
+        if(layoutAnimator!=null)layoutAnimator.cancel();
+        layoutAnimator=ValueAnimator.ofFloat(.55f,1f);
+        layoutAnimator.setDuration(135);
+        layoutAnimator.addUpdateListener(anim->{
+            transitionAlpha=(Float)anim.getAnimatedValue();invalidate();
+        });
+        layoutAnimator.start();
+    }
     public String getMode(){return mode;}
     public void setLanguage(boolean value,boolean shift){if(arabic!=value||upper!=shift){arabic=value;upper=shift;refresh();}}
     public void setSensitive(boolean value){if(sensitive!=value){sensitive=value;refresh();}}
@@ -116,6 +130,8 @@ public final class CanvasKeyboardView extends View {
         c.drawColor(prefs.background());
         if(cells.isEmpty())layoutCells(getWidth());
         drawToolbar(c);
+        int layer=c.saveLayerAlpha(0,keyboardStart,getWidth(),getHeight(),
+            Math.round(255*transitionAlpha));
         for(Cell cell:cells){
             RectF r=cell.rect;
             boolean down=false;
@@ -145,6 +161,7 @@ public final class CanvasKeyboardView extends View {
                 }
             }
         }
+        c.restoreToCount(layer);
         drawPressBubbles(c);
     }
     private void drawOneLine(Canvas c,String text,float x,float baseline,float maxWidth){
@@ -400,5 +417,5 @@ public final class CanvasKeyboardView extends View {
         for(int i=0;i<fingers.size();i++){Press p=fingers.valueAt(i);if(p.timer!=null)handler.removeCallbacks(p.timer);}
         fingers.clear();
     }
-    @Override protected void onDetachedFromWindow(){stopAll();super.onDetachedFromWindow();}
+    @Override protected void onDetachedFromWindow(){stopAll();if(layoutAnimator!=null)layoutAnimator.cancel();super.onDetachedFromWindow();}
 }
