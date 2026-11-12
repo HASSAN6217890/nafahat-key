@@ -246,6 +246,7 @@ public final class InputHandler {
         if (canCompose() && isWordText(text)) {
             lastCorrection = null;
             autoSpace = false;
+            spaceAfterWord = false;
             if (word.length() == 0) composeStart = selStart != selEnd && selStart >= 0 ? Math.min(selStart, selEnd) : belief;
             word.append(text);
             ic.setComposingText(word, 1);
@@ -260,17 +261,54 @@ public final class InputHandler {
             if (belief > 0) setBelief(belief - 1);
         }
         autoSpace = false;
+        spaceAfterWord = false;
+        boolean hadWord = word.length() > 0 && !word.toString().startsWith("#");
         boolean correct = punct && text.charAt(0) != '.' && text.charAt(0) != ':';
         finishWord(text, correct);
+        if (punct && hadWord && prefs.autoSpacePunct() && canCompose() && !email && !url) {
+            // Automatic space after punctuation; a following space or punctuation absorbs it.
+            ic.commitText(" ", 1);
+            if (belief >= 0) setBelief(belief + 1);
+            autoSpace = true;
+            updateAutoCap();
+        }
         afterCharShift();
     }
 
+    private boolean spaceAfterWord;
+    private long lastSpaceTime;
+
     public void onSpace() {
         if (internalKind != 0) { internalAppend(" "); return; }
-        if (ui.ic() == null) return;
+        InputConnection ic = ui.ic();
+        if (ic == null) return;
         emptyField = false;
+        long now = SystemClock.uptimeMillis();
+        if (word.length() == 0 && autoSpace) {
+            // A space was already added automatically (after a suggestion or punctuation).
+            autoSpace = false;
+            return;
+        }
+        if (word.length() == 0 && spaceAfterWord && prefs.doubleSpacePeriod() && canCompose()
+            && now - lastSpaceTime < 800 && !email && !url) {
+            // Two spaces = full stop and space.
+            ic.beginBatchEdit();
+            ic.deleteSurroundingText(1, 0);
+            ic.commitText(". ", 1);
+            ic.endBatchEdit();
+            if (belief >= 0) setBelief(belief + 1);
+            spaceAfterWord = false;
+            prevWord = null;
+            lastCorrection = null;
+            updateAutoCap();
+            updateStrip();
+            return;
+        }
+        boolean hadWord = word.length() > 0;
         autoSpace = false;
         finishWord(" ", true);
+        spaceAfterWord = hadWord;
+        lastSpaceTime = now;
     }
 
     private boolean isWordText(String text) {
@@ -302,6 +340,13 @@ public final class InputHandler {
                 if (r != null && r.autoCorrect != null && !r.autoCorrect.equals(typed)) {
                     committed = r.autoCorrect;
                     corr = new Correction(typed, committed, sep == null ? "" : sep);
+                } else if (r != null && " ".equals(sep) && prefs.spaceInsertsPrediction() && !r.words.isEmpty()) {
+                    // Space inserts the middle (most likely) completion of the word being typed.
+                    String best = r.words.get(0);
+                    if (!best.equals(typed) && TextNorm.normalize(best).startsWith(TextNorm.normalize(typed))) {
+                        committed = best;
+                        corr = new Correction(typed, committed, sep);
+                    }
                 }
             }
             ic.commitText(committed, 1);
@@ -355,6 +400,7 @@ public final class InputHandler {
         finishWord(null, false);
         prevWord = null;
         autoSpace = false;
+        spaceAfterWord = false;
         int ime = info == null ? 0 : info.imeOptions;
         if (enterAction >= 0) {
             ic.performEditorAction(ime & EditorInfo.IME_MASK_ACTION);
@@ -375,7 +421,9 @@ public final class InputHandler {
         InputConnection ic = ui.ic();
         if (ic == null) return;
         autoSpace = false;
-        if (repeat == 0 && lastCorrection != null && word.length() == 0 && revertCorrection()) return;
+        spaceAfterWord = false;
+        if (repeat == 0 && lastCorrection != null && word.length() == 0 && prefs.undoCorrectionOnBackspace()
+            && revertCorrection()) return;
         lastCorrection = null;
         if (word.length() > 0) {
             if (repeat > 15) {
@@ -503,6 +551,55 @@ public final class InputHandler {
         prevWord = UserDict.learnable(c.original) ? c.original : null;
         updateStrip();
         return true;
+    }
+
+    // ================================================================== swipe left on backspace
+    private int swipeOrigin = -1;
+    private int swipeLen;
+    private String swipeBefore;
+
+    /** Selects the last `words` words before the cursor (shown as a selection while swiping). */
+    public void onDeleteSwipe(int words) {
+        InputConnection ic = ui.ic();
+        if (ic == null) return;
+        if (swipeBefore == null) {
+            commitWordAsIs();
+            lastCorrection = null;
+            swipeOrigin = selStart == selEnd ? belief : -1;
+            CharSequence before = ic.getTextBeforeCursor(400, 0);
+            swipeBefore = before == null ? "" : before.toString();
+        }
+        String b = swipeBefore;
+        int i = b.length();
+        for (int w = 0; w < words && i > 0; w++) {
+            while (i > 0 && Character.isWhitespace(b.charAt(i - 1))) i--;
+            if (i > 0 && TextNorm.isWordChar(b.charAt(i - 1))) {
+                while (i > 0 && TextNorm.isWordChar(b.charAt(i - 1))) i--;
+            } else if (i > 0) {
+                i--;
+            }
+        }
+        swipeLen = b.length() - i;
+        if (swipeOrigin >= swipeLen) ic.setSelection(swipeOrigin - swipeLen, swipeOrigin);
+    }
+
+    public void onDeleteSwipeEnd() {
+        InputConnection ic = ui.ic();
+        int len = swipeLen, origin = swipeOrigin;
+        swipeOrigin = -1;
+        swipeLen = 0;
+        swipeBefore = null;
+        if (ic == null || len <= 0) return;
+        if (origin >= len) {
+            ic.setSelection(origin - len, origin);
+            ic.commitText("", 1);
+            setBelief(origin - len);
+        } else {
+            ic.deleteSurroundingText(len, 0);
+        }
+        prevWord = null;
+        updateAutoCap();
+        updateStrip();
     }
 
     // ================================================================== shift

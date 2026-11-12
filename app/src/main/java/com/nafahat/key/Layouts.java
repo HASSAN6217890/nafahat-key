@@ -199,6 +199,20 @@ public final class Layouts {
             new Layout.Row(0f, H_ROW, b, Key.ch("0"), c, enter(1f)));
     }
 
+    /** Adds the optional arrow-key row (spec 0.4) at the bottom of a page. */
+    public static Layout withArrows(Layout l) {
+        float w = l.units / 4f;
+        Layout.Row arrows = new Layout.Row(0f, 40f,
+            new Key(Key.ARROW, null, "left", null, null, w, true, "تحريك المؤشر يساراً"),
+            new Key(Key.ARROW, null, "up", null, null, w, true, "تحريك المؤشر للأعلى"),
+            new Key(Key.ARROW, null, "down", null, null, w, true, "تحريك المؤشر للأسفل"),
+            new Key(Key.ARROW, null, "right", null, null, w, true, "تحريك المؤشر يميناً"));
+        Layout.Row[] rows = new Layout.Row[l.rows.length + 1];
+        System.arraycopy(l.rows, 0, rows, 0, l.rows.length);
+        rows[l.rows.length] = arrows;
+        return new Layout(l.id + "_arrows", l.units, l.arabic, l.letters, rows);
+    }
+
     private static Key[] sym(String... s) {
         Key[] out = new Key[s.length];
         for (int i = 0; i < s.length; i++) out[i] = Key.ch(s[i]);

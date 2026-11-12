@@ -25,7 +25,7 @@ import java.util.concurrent.Executors;
 
 /** Local-only Android IME: no logging, no network, no clipboard reads unless the user asks. */
 public final class NafahatKeyboardService extends InputMethodService implements KeyboardView.Listener,
-    CandidateStrip.Listener, GridPanel.Listener, LibraryPanel.Host, InputHandler.Ui {
+    ResizeFrame.Listener, CandidateStrip.Listener, GridPanel.Listener, LibraryPanel.Host, InputHandler.Ui {
 
     private static final int PANEL_KEYS = 0, PANEL_MENU = 1, PANEL_THEME = 2, PANEL_ONE_HAND = 3,
         PANEL_EDIT = 4, PANEL_LIBRARY = 5, PANEL_MORE = 6;
@@ -38,6 +38,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private static final int C_E_LEFT = 41, C_E_RIGHT = 42, C_E_UP = 43, C_E_DOWN = 44, C_E_SELECT = 45,
         C_E_ALL = 46, C_E_COPY = 47, C_E_CUT = 48, C_E_PASTE = 49, C_E_HOME = 50, C_E_END = 51, C_E_DEL = 52;
     private static final int C_MORE_WORD = 60;
+    private static final int C_THEME_BASE = 70;
 
     private KeyboardPrefs prefs;
     private InputHandler handler;
@@ -52,6 +53,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private GridPanel grid;
     private LibraryPanel library;
     private PreviewOverlay overlay;
+    private ResizeFrame resizeFrame;
+    private boolean arrowCached;
+    // live resize state in pixels (kept as floats while dragging)
+    private float rsLeft, rsRight, rsHeightPct, rsLiftDp;
 
     private int panel = PANEL_KEYS;
     private int symbolsPage;      // 0 letters, 1 or 2 symbols
@@ -145,6 +150,11 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         content.addView(keyboard, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(library, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        resizeFrame = new ResizeFrame(this);
+        resizeFrame.setListener(this);
+        resizeFrame.setSource(keyboard);
+        resizeFrame.setVisibility(View.GONE);
+        content.addView(resizeFrame, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         column.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         clp.gravity = android.view.Gravity.BOTTOM;
@@ -179,6 +189,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         pinWindowToBottom();
         if (root == null) return;
         resizing = false;
+        if (resizeFrame != null) resizeFrame.setVisibility(View.GONE);
         selecting = false;
         symbolsPage = 0;
         diacriticsPage = false;
@@ -187,7 +198,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         handler.setArabic(prefs.arabic());
         if (!restarting || panel == PANEL_LIBRARY) showPanel(PANEL_KEYS);
         applyLayout(false);
-        keyboard.setPreviewEnabled(!handler.isSensitive());
+        keyboard.setPreviewEnabled(!handler.isSensitive() && prefs.keyPopups());
         keyboard.setEnterAction(handler.enterAction());
         keyboard.setShift(handler.shifted(), false);
         handler.startInputView();
@@ -228,23 +239,14 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         if (numberRowCached != prefs.numberRow()) { layouts.clear(); numberRowCached = prefs.numberRow(); }
         boolean globe = true; // the owner wants the 🌐 key always (tap = next keyboard, long-press = picker)
         if (globeCached != globe) { layouts.clear(); globeCached = globe; }
-        int h = KeyboardView.computeHeight(this, layoutFor("ar"), prefs.heightPercent());
-        // Reserve room above the strip so the tallest preview / long-press bubble never clips.
-        float d = getResources().getDisplayMetrics().density;
-        float pct = prefs.heightPercent() / 100f;
-        float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
-        float keyDp = tallestRowDp - 6f;
-        float neededDp = Math.max(keyDp * 1.25f, Math.max(keyDp, 44f) + 4f) + 8f;
-        int spacerPx = Math.round(Math.max(8f, neededDp - 46f) * d);
-        ViewGroup.LayoutParams lp = spacer.getLayoutParams();
-        if (lp != null && lp.height != spacerPx) { lp.height = spacerPx; spacer.setLayoutParams(lp); }
-        keyboard.setKeyboardHeight(h);
-        grid.setPanelHeight(h);
-        library.setPanelHeight(h);
+        if (arrowCached != prefs.arrowRow()) { layouts.clear(); arrowCached = prefs.arrowRow(); }
+        applySizes();
         keyboard.setTheme(theme);
-        keyboard.setFontPercent(prefs.fontPercent());
+        keyboard.setFontPercent(Math.round(prefs.fontPercent() * (prefs.largerText() ? 1.15f : 1f)));
         keyboard.setHaptics(prefs.vibrate(), prefs.vibrationLevel());
-        keyboard.setOneHanded(prefs.oneHanded());
+        keyboard.setTypingOptions(prefs.longPressMs(), prefs.showHints(), prefs.swipeDeleteWords(), prefs.artStrength());
+        content.setBackgroundColor(theme.background);
+        resizeFrame.setTheme(theme);
         strip.setTheme(theme);
         grid.setTheme(theme);
         library.setTheme(theme);
@@ -256,11 +258,41 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         } catch (RuntimeException ignored) { }
     }
 
+    /** Height, width, position and lift for the current orientation (or the live resize state). */
+    private void applySizes() {
+        float d = getResources().getDisplayMetrics().density;
+        int heightPct = resizing ? Math.round(rsHeightPct) : prefs.heightPercent();
+        int liftDp = resizing ? Math.round(rsLiftDp) : prefs.liftDp();
+        int liftPx = Math.round(liftDp * d);
+        int h = KeyboardView.computeHeight(this, layoutFor(arrowCached ? "ar_arrows" : "ar"), heightPct);
+        // Reserve room above the strip so the tallest preview / long-press bubble never clips.
+        float pct = heightPct / 100f;
+        float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
+        float keyDp = tallestRowDp - 6f;
+        float neededDp = Math.max(keyDp * 1.25f, Math.max(keyDp, 44f) + 4f) + 8f;
+        int spacerPx = Math.round(Math.max(8f, neededDp - 46f) * d);
+        ViewGroup.LayoutParams lp = spacer.getLayoutParams();
+        if (lp != null && lp.height != spacerPx) { lp.height = spacerPx; spacer.setLayoutParams(lp); }
+        keyboard.setKeyboardHeight(h + liftPx);
+        grid.setPanelHeight(h + liftPx);
+        library.setPanelHeight(h + liftPx);
+        if (resizing) {
+            float W = keyboard.getWidth() > 0 ? keyboard.getWidth() : getResources().getDisplayMetrics().widthPixels;
+            float aw = Math.max(1f, rsRight - rsLeft);
+            int widthPct = Math.round(aw / W * 100f);
+            int offsetPct = W - aw > 1f ? Math.round(rsLeft / (W - aw) * 100f) : 50;
+            keyboard.setArea(widthPct, offsetPct, liftPx);
+            resizeFrame.invalidate();
+        } else {
+            keyboard.setArea(prefs.widthPercent(), prefs.offsetPercent(), liftPx);
+        }
+    }
+
     private Layout layoutFor(String id) {
         Layout l = layouts.get(id);
         if (l != null) return l;
         boolean num = prefs.numberRow();
-        switch (id) {
+        switch (id.replace("_arrows", "")) {
             case "ar": l = Layouts.arabic(num, globeCached); break;
             case "en": l = Layouts.english(num, 0, globeCached); break;
             case "en_mail": l = Layouts.english(num, 1, globeCached); break;
@@ -273,6 +305,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
             case "phone": l = Layouts.numberPad(true); break;
             default: l = Layouts.numberPad(false);
         }
+        if (id.endsWith("_arrows")) l = Layouts.withArrows(l);
         layouts.put(id, l);
         return l;
     }
@@ -280,12 +313,13 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private String currentLayoutId() {
         if (handler.isPhone()) return "phone";
         if (handler.isNumeric()) return "number";
-        if (diacriticsPage) return "diac";
+        if (diacriticsPage) return "diac" + (arrowCached ? "_arrows" : "");
         boolean ar = handler.arabic();
-        if (symbolsPage > 0) return "sym" + symbolsPage + (ar ? "_ar" : "_en");
-        if (handler.isEmail()) return "en_mail";
-        if (handler.isUrl()) return "en_url";
-        return ar ? "ar" : "en";
+        String arrows = arrowCached ? "_arrows" : "";
+        if (symbolsPage > 0) return "sym" + symbolsPage + (ar ? "_ar" : "_en") + arrows;
+        if (handler.isEmail()) return "en_mail" + arrows;
+        if (handler.isUrl()) return "en_url" + arrows;
+        return (ar ? "ar" : "en") + arrows;
     }
 
     private void applyLayout(boolean animate) {
@@ -319,34 +353,28 @@ public final class NafahatKeyboardService extends InputMethodService implements 
 
     private void buildMenu() {
         List<GridPanel.Cell> cells = new ArrayList<>();
-        GridPanel.Cell lib = cell(C_LIBRARY, "النصوص", "📋");
-        lib.enabled = !handler.isSensitive();
-        cells.add(lib);
-        cells.add(cell(C_THEME, "المظهر", "🎨"));
-        cells.add(cell(C_RESIZE, "تغيير الحجم", "↕"));
-        GridPanel.Cell one = cell(C_ONE_HAND, "بيد واحدة", "✋");
-        one.active = prefs.oneHanded() != 0;
-        cells.add(one);
-        cells.add(cell(C_EDIT, "تعديل النص", "✂"));
-        GridPanel.Cell diac = cell(C_DIACRITICS, "الحركات", "ـَ");
-        diac.active = diacriticsPage;
-        cells.add(diac);
-        cells.add(cell(C_LANGUAGE, handler.arabic() ? "English" : "العربية", "🌐"));
-        cells.add(cell(C_UNDO, "تراجع", "↶"));
-        cells.add(cell(C_SETTINGS, "الإعدادات", "⚙"));
-        cells.add(cell(C_SWITCH_IME, "تبديل لوحة المفاتيح", "🌐"));
+        for (int id : prefs.menuOrder(MenuItems.defaults())) {
+            String title = id == C_LANGUAGE ? (handler.arabic() ? "English" : "العربية") : MenuItems.title(id);
+            GridPanel.Cell c = cell(id, title, MenuItems.glyph(id));
+            if (id == C_LIBRARY) c.enabled = !handler.isSensitive();
+            if (id == C_ONE_HAND) c.active = prefs.oneHanded() != 0;
+            if (id == C_DIACRITICS) c.active = diacriticsPage;
+            cells.add(c);
+        }
         grid.setCells(cells, 3, "الإصدار " + versionName());
     }
 
     private void buildThemePanel() {
         List<GridPanel.Cell> cells = new ArrayList<>();
         String t = prefs.theme();
-        GridPanel.Cell a = cell(C_T_NAFAHAT, "نفحات", null); a.active = t.equals("nafahat"); cells.add(a);
-        GridPanel.Cell b = cell(C_T_DARK, "داكن", null); b.active = t.equals("dark"); cells.add(b);
-        GridPanel.Cell c = cell(C_T_LIGHT, "فاتح", null); c.active = t.equals("light"); cells.add(c);
-        GridPanel.Cell s = cell(C_T_SYSTEM, "حسب نظام الهاتف", null); s.active = t.equals("system"); cells.add(s);
+        for (int i = 0; i < Theme.GALLERY.length; i++) {
+            GridPanel.Cell c = cell(C_THEME_BASE + i, Theme.GALLERY[i][1], null);
+            c.active = t.equals(Theme.GALLERY[i][0]);
+            c.data = Theme.GALLERY[i][0];
+            cells.add(c);
+        }
         cells.add(cell(C_BACK, "رجوع", null));
-        grid.setCells(cells, 2, "المظهر");
+        grid.setCells(cells, 3, "المظهر");
     }
 
     private void buildOneHandPanel() {
@@ -404,15 +432,22 @@ public final class NafahatKeyboardService extends InputMethodService implements 
                 symbolsPage = symbolsPage == 1 ? 2 : 1; applyLayout(true); break;
             case Key.ONE_HAND_SWAP:
                 prefs.setOneHanded(prefs.oneHanded() == 1 ? 2 : 1);
-                keyboard.setOneHanded(prefs.oneHanded());
+                applySizes();
                 break;
+            case Key.ARROW: {
+                InputConnection ic = getCurrentInputConnection();
+                int code = "left".equals(key.output) ? KeyEvent.KEYCODE_DPAD_LEFT : "right".equals(key.output)
+                    ? KeyEvent.KEYCODE_DPAD_RIGHT : "up".equals(key.output) ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN;
+                arrow(ic, code);
+                break;
+            }
             case Key.GLOBE:
                 handler.commitWordAsIs();
                 switchToNextKeyboard();
                 break;
             case Key.ONE_HAND_EXIT:
                 prefs.setOneHanded(0);
-                keyboard.setOneHanded(0);
+                applySizes();
                 break;
             default:
         }
@@ -423,6 +458,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     @Override public void onSpaceSwipe() { switchLanguage(); }
 
     @Override public void onCursorMove(int steps) { handler.onCursorMove(steps); }
+
+    @Override public void onDeleteSwipe(int words) { handler.onDeleteSwipe(words); }
+
+    @Override public void onDeleteSwipeEnd() { handler.onDeleteSwipeEnd(); }
 
     @Override public void onKeyLongPress(Key key) {
         if (key.type == Key.GLOBE) showImePicker();
@@ -469,13 +508,13 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     }
 
     @Override public void onMenuButton() {
-        if (resizing) { endResize(); return; }
+        if (resizing) { onResizeDone(); return; }
         if (handler.internalActive()) handler.endInternal(true);
         showPanel(panel == PANEL_KEYS ? PANEL_MENU : PANEL_KEYS);
     }
 
     @Override public void onCollapseButton() {
-        if (resizing) { endResize(); return; }
+        if (resizing) { onResizeDone(); return; }
         if (panel != PANEL_KEYS) { showPanel(PANEL_KEYS); return; }
         if (handler.moreSuggestions().size() > 3) { showPanel(PANEL_MORE); return; }
         requestHideSelf(0);
@@ -506,12 +545,9 @@ public final class NafahatKeyboardService extends InputMethodService implements 
             }
             case C_BACK: showPanel(PANEL_MENU); break;
             case C_T_NAFAHAT: setThemeId("nafahat"); break;
-            case C_T_DARK: setThemeId("dark"); break;
-            case C_T_LIGHT: setThemeId("light"); break;
-            case C_T_SYSTEM: setThemeId("system"); break;
-            case C_H_LEFT: prefs.setOneHanded(1); keyboard.setOneHanded(1); showPanel(PANEL_KEYS); break;
-            case C_H_RIGHT: prefs.setOneHanded(2); keyboard.setOneHanded(2); showPanel(PANEL_KEYS); break;
-            case C_H_OFF: prefs.setOneHanded(0); keyboard.setOneHanded(0); showPanel(PANEL_KEYS); break;
+            case C_H_LEFT: prefs.setOneHanded(1); applySizes(); startResize(); break;
+            case C_H_RIGHT: prefs.setOneHanded(2); applySizes(); startResize(); break;
+            case C_H_OFF: prefs.setOneHanded(0); applySizes(); showPanel(PANEL_KEYS); break;
             case C_E_LEFT: arrow(ic, KeyEvent.KEYCODE_DPAD_LEFT); break;
             case C_E_RIGHT: arrow(ic, KeyEvent.KEYCODE_DPAD_RIGHT); break;
             case C_E_UP: arrow(ic, KeyEvent.KEYCODE_DPAD_UP); break;
@@ -524,6 +560,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
             case C_E_CUT: contextAction(ic, android.R.id.cut); selecting = false; buildEditPanel(); break;
             case C_E_PASTE: contextAction(ic, android.R.id.paste); break;
             case C_E_DEL: handler.onDelete(0); break;
+            case C_THEME_BASE: case C_THEME_BASE + 1: case C_THEME_BASE + 2: case C_THEME_BASE + 3:
+            case C_THEME_BASE + 4: case C_THEME_BASE + 5:
+                setThemeId((String) c.data);
+                break;
             case C_MORE_WORD:
                 showPanel(PANEL_KEYS);
                 handler.pickWord((String) c.data, 1);
@@ -554,40 +594,86 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         ic.performContextMenuAction(id);
     }
 
-    // ------------------------------------------------------------------ resize (live)
+    // ------------------------------------------------------------------ resize mode (frame with handles)
     private void startResize() {
         showPanel(PANEL_KEYS);
+        float W = keyboard.getWidth() > 0 ? keyboard.getWidth() : getResources().getDisplayMetrics().widthPixels;
+        float aw = W * prefs.widthPercent() / 100f;
+        rsLeft = (W - aw) * prefs.offsetPercent() / 100f;
+        rsRight = rsLeft + aw;
+        rsHeightPct = prefs.heightPercent();
+        rsLiftDp = prefs.liftDp();
         resizing = true;
-        showResizeStrip();
-    }
-
-    private void showResizeStrip() {
+        keyboard.cancelAllPointers();
+        resizeFrame.setVisibility(View.VISIBLE);
         List<CandidateStrip.Item> items = new ArrayList<>();
-        CandidateStrip.Item smaller = new CandidateStrip.Item("−", CandidateStrip.ACTION, (Runnable) () -> resizeBy(-5));
-        CandidateStrip.Item info = new CandidateStrip.Item("الارتفاع " + prefs.heightPercent() + "%", CandidateStrip.INFO, null);
-        info.weight = 1.8f;
-        CandidateStrip.Item bigger = new CandidateStrip.Item("+", CandidateStrip.ACTION, (Runnable) () -> resizeBy(5));
-        CandidateStrip.Item reset = new CandidateStrip.Item("الافتراضي", CandidateStrip.ACTION, (Runnable) () -> {
-            prefs.setHeightPercent(100);
-            prefs.setFontPercent(100);
-            applyPrefs();
-            showResizeStrip();
-        });
-        CandidateStrip.Item done = new CandidateStrip.Item("تم", CandidateStrip.ACTION, (Runnable) this::endResize);
-        done.strong = true;
-        items.add(bigger); items.add(info); items.add(smaller); items.add(reset); items.add(done);
+        CandidateStrip.Item info = new CandidateStrip.Item("اسحب الحواف لتغيير الحجم، والوسط لتحريك لوحة المفاتيح",
+            CandidateStrip.INFO, null);
+        info.weight = 1f;
+        items.add(info);
         strip.setChips(items);
+        applySizes();
     }
 
-    private void resizeBy(int delta) {
-        prefs.setHeightPercent(prefs.heightPercent() + delta);
-        prefs.setFontPercent(prefs.heightPercent());
-        applyPrefs();
-        showResizeStrip();
+    @Override public void onResizeDrag(int handle, float dx, float dy) {
+        float d = getResources().getDisplayMetrics().density;
+        float W = keyboard.getWidth();
+        float minW = W * 0.55f;
+        float baseH = KeyboardView.computeHeight(this, layoutFor(arrowCached ? "ar_arrows" : "ar"), 100);
+        switch (handle) {
+            case ResizeFrame.TOP:
+                rsHeightPct -= dy / baseH * 100f;
+                break;
+            case ResizeFrame.BOTTOM: {
+                float lift = rsLiftDp - dy / d;
+                if (lift < 0) { dy += lift * d; lift = 0; }
+                rsHeightPct += (rsLiftDp - lift) * d / baseH * 100f;
+                rsLiftDp = lift;
+                break;
+            }
+            case ResizeFrame.LEFT:
+                rsLeft = Math.max(0, Math.min(rsRight - minW, rsLeft + dx));
+                break;
+            case ResizeFrame.RIGHT:
+                rsRight = Math.min(W, Math.max(rsLeft + minW, rsRight + dx));
+                break;
+            case ResizeFrame.MOVE: {
+                float shift = Math.max(-rsLeft, Math.min(W - rsRight, dx));
+                rsLeft += shift;
+                rsRight += shift;
+                rsLiftDp = Math.max(0, Math.min(160, rsLiftDp - dy / d));
+                break;
+            }
+            default:
+        }
+        rsHeightPct = Math.max(70, Math.min(140, rsHeightPct));
+        rsLiftDp = Math.max(0, Math.min(160, rsLiftDp));
+        applySizes();
+    }
+
+    @Override public void onResizeDone() {
+        float W = keyboard.getWidth();
+        float aw = rsRight - rsLeft;
+        prefs.setHeightPercent(Math.round(rsHeightPct));
+        prefs.setLiftDp(Math.round(rsLiftDp));
+        prefs.setWidthPercent(Math.round(aw / W * 100f));
+        prefs.setOffsetPercent(W - aw > 1f ? Math.round(rsLeft / (W - aw) * 100f) : 50);
+        endResize();
+    }
+
+    @Override public void onResizeReset() {
+        float W = keyboard.getWidth();
+        rsLeft = 0;
+        rsRight = W;
+        rsHeightPct = 100;
+        rsLiftDp = 0;
+        applySizes();
     }
 
     private void endResize() {
         resizing = false;
+        resizeFrame.setVisibility(View.GONE);
+        applySizes();
         handler.updateStrip();
     }
 
@@ -657,6 +743,16 @@ public final class NafahatKeyboardService extends InputMethodService implements 
 
     @Override public void showStrip(List<CandidateStrip.Item> items, boolean chips) {
         if (strip == null || resizing) return;
+        if (!chips && items.isEmpty() && !handler.internalActive()) {
+            List<CandidateStrip.Item> shortcuts = new ArrayList<>();
+            for (int id : prefs.stripShortcuts()) {
+                if (id == C_LIBRARY && handler.isSensitive()) continue;
+                final int cid = id;
+                shortcuts.add(new CandidateStrip.Item(MenuItems.glyph(id) + " " + MenuItems.title(id), CandidateStrip.ACTION,
+                    (Runnable) () -> onCell(cell(cid, MenuItems.title(cid), null))));
+            }
+            if (!shortcuts.isEmpty()) { strip.setChips(shortcuts); return; }
+        }
         if (chips) strip.setChips(items);
         else strip.setSuggestions(items, handler.arabic());
     }

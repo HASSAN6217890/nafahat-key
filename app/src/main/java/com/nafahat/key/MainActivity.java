@@ -126,17 +126,35 @@ public final class MainActivity extends Activity {
         content.addView(previewBox, new LinearLayout.LayoutParams(-1, -2));
         refreshPreview();
 
-        LinearLayout themes = row();
-        String[][] ids = {{"nafahat", "نفحات"}, {"dark", "داكن"}, {"light", "فاتح"}, {"system", "حسب الهاتف"}};
-        for (String[] t : ids) {
-            TextView chip = UiKit.chip(this, t[1], t[0].equals(prefs.theme()));
-            chip.setOnClickListener(v -> { prefs.setTheme(t[0]); rebuild(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, UiKit.dp(this, 38), 1f);
-            lp.setMargins(UiKit.dp(this, 3), UiKit.dp(this, 8), UiKit.dp(this, 3), 0);
-            themes.addView(chip, lp);
+        // Theme gallery
+        android.widget.HorizontalScrollView gallery = new android.widget.HorizontalScrollView(this);
+        gallery.setHorizontalScrollBarEnabled(false);
+        LinearLayout thumbs = row();
+        for (String[] g : Theme.GALLERY) {
+            LinearLayout cardCol = UiKit.vertical(this);
+            Theme th = Theme.forId(this, g[0]);
+            ThemeThumb thumb = new ThemeThumb(this, th);
+            thumb.setArtStrength(prefs.artStrength());
+            thumb.setSelectedTheme(g[0].equals(prefs.theme()));
+            thumb.setContentDescription("مظهر " + g[1]);
+            thumb.setOnClickListener(v -> { prefs.setTheme(g[0]); rebuild(); });
+            cardCol.addView(thumb, new LinearLayout.LayoutParams(UiKit.dp(this, 112), UiKit.dp(this, 84)));
+            TextView name = UiKit.text(this, g[1], 12, g[0].equals(prefs.theme()));
+            name.setGravity(android.view.Gravity.CENTER);
+            cardCol.addView(name, new LinearLayout.LayoutParams(UiKit.dp(this, 112), -2));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.setMargins(UiKit.dp(this, 4), UiKit.dp(this, 10), UiKit.dp(this, 4), 0);
+            thumbs.addView(cardCol, lp);
         }
-        content.addView(themes);
-        slider("ارتفاع لوحة المفاتيح", 85, 125, prefs.heightPercent(), "%", v -> {
+        gallery.addView(thumbs);
+        content.addView(gallery);
+        slider("وضوح صورة الخلفية في مظهري الروضة ومكة", 0, 100, prefs.artStrength(), "%", v -> {
+            prefs.setArtStrength(v);
+            refreshPreview();
+        });
+        note("يُحفظ حجم لوحة المفاتيح لكل وضع على حدة (عمودي وأفقي). لتغيير العرض والموضع بالسحب استعمل «تغيير الحجم» "
+            + "من قائمة ⊞، و«بيد واحدة» هو تضييق مع إزاحة لجهة.");
+        slider("ارتفاع لوحة المفاتيح (" + (prefs.landscape() ? "أفقي" : "عمودي") + ")", 70, 140, prefs.heightPercent(), "%", v -> {
             prefs.setHeightPercent(v);
             refreshPreview();
         });
@@ -144,14 +162,68 @@ public final class MainActivity extends Activity {
             prefs.setFontPercent(v);
             refreshPreview();
         });
+        Button resetSize = UiKit.secondary(this, "إعادة الحجم والموضع إلى الافتراضي");
+        resetSize.setOnClickListener(v -> { prefs.resetSize(); rebuild(); });
+        content.addView(resetSize, new LinearLayout.LayoutParams(-1, UiKit.dp(this, 42)));
         toggle("صف الأرقام 1 2 3 فوق الحروف", prefs.numberRow(), v -> { prefs.setNumberRow(v); refreshPreview(); });
+        toggle("نص أكبر على الأزرار", prefs.largerText(), v -> { prefs.setLargerText(v); refreshPreview(); });
+        toggle("إظهار الرموز الصغيرة في زوايا الأزرار", prefs.showHints(), v -> { prefs.setShowHints(v); refreshPreview(); });
+        toggle("صف أسهم لتحريك المؤشر", prefs.arrowRow(), v -> { prefs.setArrowRow(v); refreshPreview(); });
 
         // Typing
         section("الكتابة");
         toggle("الاهتزاز عند الضغط", prefs.vibrate(), prefs::setVibrate);
         slider("قوة الاهتزاز (1 خفيف، 3 قوي)", 1, 3, prefs.vibrationLevel(), "", prefs::setVibrationLevel);
+        slider("مدة الضغط المطوّل (ملّي ثانية)", 150, 800, prefs.longPressMs(), "", prefs::setLongPressMs);
+        toggle("فقاعة الحرف فوق الزر عند الضغط", prefs.keyPopups(), prefs::setKeyPopups);
         toggle("الحرف الكبير التلقائي في بداية الجملة (الإنكليزية)", prefs.autoCap(), prefs::setAutoCap);
         toggle("التصحيح التلقائي للكلمات", prefs.autoCorrect(), prefs::setAutoCorrect);
+        toggle("التراجع عن التصحيح بزر المسح", prefs.undoCorrectionOnBackspace(), prefs::setUndoCorrectionOnBackspace);
+        toggle("إدراج الاقتراح الأوسط بالمسافة", prefs.spaceInsertsPrediction(), prefs::setSpaceInsertsPrediction);
+        toggle("مسافتان متتاليتان = نقطة ومسافة", prefs.doubleSpacePeriod(), prefs::setDoubleSpacePeriod);
+        toggle("مسافة تلقائية بعد علامات الترقيم", prefs.autoSpacePunct(), prefs::setAutoSpacePunct);
+        toggle("سحب زر المسح لليسار يحذف الكلمات المحددة", prefs.swipeDeleteWords(), prefs::setSwipeDeleteWords);
+
+        // ⊞ menu customisation
+        section("تخصيص قائمة ⊞");
+        note("اسحب العلامة ≡ لإعادة ترتيب العناصر، وفعّل «في الشريط» لإظهار العنصر اختصاراً في الشريط العلوي "
+            + "عندما لا توجد اقتراحات.");
+        DragList menuList = new DragList(this);
+        List<Integer> shortcuts = prefs.stripShortcuts();
+        for (int id : prefs.menuOrder(MenuItems.defaults())) {
+            LinearLayout r = UiKit.horizontal(this);
+            r.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            r.setBackground(UiKit.rounded(UiKit.SURFACE, 10, this));
+            UiKit.pad(r, this, 8, 4);
+            TextView handle = UiKit.text(this, "≡", 22, true);
+            handle.setGravity(android.view.Gravity.CENTER);
+            handle.setTextColor(Color.GRAY);
+            handle.setContentDescription("اسحب للترتيب");
+            r.addView(handle, new LinearLayout.LayoutParams(UiKit.dp(this, 34), UiKit.dp(this, 40)));
+            r.addView(UiKit.text(this, MenuItems.title(id), 15, false), new LinearLayout.LayoutParams(0, -2, 1f));
+            CheckBox inStrip = new CheckBox(this);
+            inStrip.setText("في الشريط");
+            inStrip.setChecked(shortcuts.contains(id));
+            final int mid = id;
+            inStrip.setOnCheckedChangeListener((b, on) -> {
+                List<Integer> cur = prefs.stripShortcuts();
+                if (on && !cur.contains(mid)) cur.add(mid);
+                if (!on) cur.remove(Integer.valueOf(mid));
+                prefs.setStripShortcuts(cur);
+            });
+            r.addView(inStrip);
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+            rlp.setMargins(0, UiKit.dp(this, 3), 0, UiKit.dp(this, 3));
+            r.setLayoutParams(rlp);
+            menuList.addRow(r, handle, id);
+        }
+        menuList.setOnReorder(ids -> {
+            List<Integer> order = new ArrayList<>();
+            for (Long l : ids) order.add(l.intValue());
+            prefs.setMenuOrder(order);
+        });
+        content.addView(menuList, new LinearLayout.LayoutParams(-1, -2));
+
         EditText test = new EditText(this);
         test.setHint("جرّب الكتابة هنا: طواف، زيارة، إن شاء الله، 0123456789");
         test.setTextSize(16);
@@ -226,10 +298,13 @@ public final class MainActivity extends Activity {
     private void refreshPreview() {
         if (preview == null) return;
         Theme t = prefs.resolveTheme(this);
-        Layout l = Layouts.arabic(prefs.numberRow());
+        Layout l = Layouts.arabic(prefs.numberRow(), true);
+        if (prefs.arrowRow()) l = Layouts.withArrows(l);
         preview.setTheme(t);
         preview.setLayout(l, false);
-        preview.setFontPercent(prefs.fontPercent());
+        preview.setFontPercent(Math.round(prefs.fontPercent() * (prefs.largerText() ? 1.15f : 1f)));
+        preview.setTypingOptions(prefs.longPressMs(), prefs.showHints(), prefs.swipeDeleteWords(), prefs.artStrength());
+        preview.setArea(prefs.widthPercent(), prefs.offsetPercent(), 0);
         preview.setKeyboardHeight(KeyboardView.computeHeight(this, l, prefs.heightPercent()));
         previewStrip.setTheme(t);
     }
