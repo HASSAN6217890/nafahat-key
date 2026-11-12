@@ -29,6 +29,10 @@ public final class Theme {
     public final int cardText;
     public final int bubble;
     public final int bubbleText;
+    /** Background art: 0 none, 1 الروضة (green dome), 2 مكة (the Kaaba). Drawn by ThemeArt. */
+    public int art;
+    /** Display name in the theme gallery. */
+    public String title = "";
 
     private Theme(String id, boolean dark, int background, int key, int keyPressed, int function,
                   int functionPressed, int functionText, int text, int hint, int strip, int stripText,
@@ -58,10 +62,37 @@ public final class Theme {
             Color.WHITE, INK);
     }
 
-    /** Resolves a stored theme id ("nafahat", "dark", "light", "system"). */
+    /** الروضة: deep ink-green gradient with a very faint green dome; translucent keys, letters first. */
+    public static Theme rawda() {
+        Theme t = new Theme("rawda", true, 0xFF0F1F19, 0xB82B3634, 0xD03D4B48, 0xD00F6133, 0xE016804A, Color.WHITE,
+            Color.WHITE, 0x99FFFFFF, 0xFF0F1F19, Color.WHITE, 0xB3FFFFFF, 0x33FFFFFF, 0xFF22302B, Color.WHITE,
+            0xFF3D4B48, Color.WHITE);
+        t.art = 1;
+        t.title = "الروضة";
+        return t;
+    }
+
+    /** مكة: ink background with a very faint Kaaba and gold band; translucent keys. */
+    public static Theme makkah() {
+        Theme t = new Theme("makkah", true, 0xFF121517, 0xB82B3634, 0xD03D4B48, 0xD00F6133, 0xE016804A, Color.WHITE,
+            Color.WHITE, 0x99FFFFFF, 0xFF121517, Color.WHITE, 0xB3FFFFFF, 0x33FFFFFF, 0xFF262B2E, Color.WHITE,
+            0xFF3D4B48, Color.WHITE);
+        t.art = 2;
+        t.title = "مكة";
+        return t;
+    }
+
+    /** Gallery order: id, title. */
+    public static final String[][] GALLERY = {
+        {"nafahat", "نفحات داكن"}, {"light", "نفحات فاتح"}, {"rawda", "الروضة"}, {"makkah", "مكة"},
+        {"dark", "داكن"}, {"system", "حسب نظام الهاتف"}};
+
+    /** Resolves a stored theme id ("nafahat", "dark", "light", "system", "rawda", "makkah"). */
     public static Theme forId(Context context, String id) {
         if ("dark".equals(id)) return darkTheme();
         if ("light".equals(id)) return lightTheme();
+        if ("rawda".equals(id)) return rawda();
+        if ("makkah".equals(id)) return makkah();
         if ("system".equals(id)) {
             int night = context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
             return night == Configuration.UI_MODE_NIGHT_YES ? darkTheme() : lightTheme();

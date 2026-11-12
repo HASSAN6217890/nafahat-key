@@ -25,7 +25,7 @@ import java.util.concurrent.Executors;
 
 /** Local-only Android IME: no logging, no network, no clipboard reads unless the user asks. */
 public final class NafahatKeyboardService extends InputMethodService implements KeyboardView.Listener,
-    CandidateStrip.Listener, GridPanel.Listener, LibraryPanel.Host, InputHandler.Ui {
+    ResizeFrame.Listener, CandidateStrip.Listener, GridPanel.Listener, LibraryPanel.Host, InputHandler.Ui {
 
     private static final int PANEL_KEYS = 0, PANEL_MENU = 1, PANEL_THEME = 2, PANEL_ONE_HAND = 3,
         PANEL_EDIT = 4, PANEL_LIBRARY = 5, PANEL_MORE = 6;
@@ -52,6 +52,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private GridPanel grid;
     private LibraryPanel library;
     private PreviewOverlay overlay;
+    private ResizeFrame resizeFrame;
+    private boolean arrowCached;
+    // live resize state in pixels (kept as floats while dragging)
+    private float rsLeft, rsRight, rsHeightPct, rsLiftDp;
 
     private int panel = PANEL_KEYS;
     private int symbolsPage;      // 0 letters, 1 or 2 symbols
@@ -145,6 +149,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         content.addView(keyboard, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(library, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        resizeFrame = new ResizeFrame(this);
+        resizeFrame.setListener(this);
+        resizeFrame.setVisibility(View.GONE);
+        content.addView(resizeFrame, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         column.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         clp.gravity = android.view.Gravity.BOTTOM;
@@ -228,23 +236,14 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         if (numberRowCached != prefs.numberRow()) { layouts.clear(); numberRowCached = prefs.numberRow(); }
         boolean globe = true; // the owner wants the 🌐 key always (tap = next keyboard, long-press = picker)
         if (globeCached != globe) { layouts.clear(); globeCached = globe; }
-        int h = KeyboardView.computeHeight(this, layoutFor("ar"), prefs.heightPercent());
-        // Reserve room above the strip so the tallest preview / long-press bubble never clips.
-        float d = getResources().getDisplayMetrics().density;
-        float pct = prefs.heightPercent() / 100f;
-        float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
-        float keyDp = tallestRowDp - 6f;
-        float neededDp = Math.max(keyDp * 1.25f, Math.max(keyDp, 44f) + 4f) + 8f;
-        int spacerPx = Math.round(Math.max(8f, neededDp - 46f) * d);
-        ViewGroup.LayoutParams lp = spacer.getLayoutParams();
-        if (lp != null && lp.height != spacerPx) { lp.height = spacerPx; spacer.setLayoutParams(lp); }
-        keyboard.setKeyboardHeight(h);
-        grid.setPanelHeight(h);
-        library.setPanelHeight(h);
+        if (arrowCached != prefs.arrowRow()) { layouts.clear(); arrowCached = prefs.arrowRow(); }
+        applySizes();
         keyboard.setTheme(theme);
-        keyboard.setFontPercent(prefs.fontPercent());
+        keyboard.setFontPercent(Math.round(prefs.fontPercent() * (prefs.largerText() ? 1.15f : 1f)));
         keyboard.setHaptics(prefs.vibrate(), prefs.vibrationLevel());
-        keyboard.setOneHanded(prefs.oneHanded());
+        keyboard.setTypingOptions(prefs.longPressMs(), prefs.showHints(), prefs.swipeDeleteWords(), prefs.artStrength());
+        content.setBackgroundColor(theme.background);
+        resizeFrame.setTheme(theme);
         strip.setTheme(theme);
         grid.setTheme(theme);
         library.setTheme(theme);
@@ -256,11 +255,42 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         } catch (RuntimeException ignored) { }
     }
 
+    /** Height, width, position and lift for the current orientation (or the live resize state). */
+    private void applySizes() {
+        float d = getResources().getDisplayMetrics().density;
+        int heightPct = resizing ? Math.round(rsHeightPct) : prefs.heightPercent();
+        int liftDp = resizing ? Math.round(rsLiftDp) : prefs.liftDp();
+        int liftPx = Math.round(liftDp * d);
+        int h = KeyboardView.computeHeight(this, layoutFor("ar"), heightPct);
+        // Reserve room above the strip so the tallest preview / long-press bubble never clips.
+        float d = getResources().getDisplayMetrics().density;
+        float pct = heightPct / 100f;
+        float tallestRowDp = Layouts.H_ROW * pct;   // the top letter row is the tallest case
+        float keyDp = tallestRowDp - 6f;
+        float neededDp = Math.max(keyDp * 1.25f, Math.max(keyDp, 44f) + 4f) + 8f;
+        int spacerPx = Math.round(Math.max(8f, neededDp - 46f) * d);
+        ViewGroup.LayoutParams lp = spacer.getLayoutParams();
+        if (lp != null && lp.height != spacerPx) { lp.height = spacerPx; spacer.setLayoutParams(lp); }
+        keyboard.setKeyboardHeight(h + liftPx);
+        grid.setPanelHeight(h + liftPx);
+        library.setPanelHeight(h + liftPx);
+        if (resizing) {
+            float W = keyboard.getWidth() > 0 ? keyboard.getWidth() : getResources().getDisplayMetrics().widthPixels;
+            float aw = Math.max(1f, rsRight - rsLeft);
+            int widthPct = Math.round(aw / W * 100f);
+            int offsetPct = W - aw > 1f ? Math.round(rsLeft / (W - aw) * 100f) : 50;
+            keyboard.setArea(widthPct, offsetPct, liftPx);
+            keyboard.post(() -> resizeFrame.setArea(keyboard.areaRect()));
+        } else {
+            keyboard.setArea(prefs.widthPercent(), prefs.offsetPercent(), liftPx);
+        }
+    }
+
     private Layout layoutFor(String id) {
         Layout l = layouts.get(id);
         if (l != null) return l;
         boolean num = prefs.numberRow();
-        switch (id) {
+        switch (id.replace("_arrows", "")) {
             case "ar": l = Layouts.arabic(num, globeCached); break;
             case "en": l = Layouts.english(num, 0, globeCached); break;
             case "en_mail": l = Layouts.english(num, 1, globeCached); break;
@@ -273,6 +303,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
             case "phone": l = Layouts.numberPad(true); break;
             default: l = Layouts.numberPad(false);
         }
+        if (id.endsWith("_arrows")) l = Layouts.withArrows(l);
         layouts.put(id, l);
         return l;
     }

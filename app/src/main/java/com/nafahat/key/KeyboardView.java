@@ -35,6 +35,10 @@ public final class KeyboardView extends View {
         void onCursorMove(int steps);
         /** Long-press on a function key (the 🌐 key opens the keyboard picker). */
         void onKeyLongPress(Key key);
+        /** Swipe left on backspace: select this many words before the cursor (0 = none). */
+        void onDeleteSwipe(int words);
+        /** Swipe on backspace ended: delete what was selected. */
+        void onDeleteSwipeEnd();
     }
 
     private static final long LONG_PRESS_MS = 300;
@@ -71,7 +75,14 @@ public final class KeyboardView extends View {
     private boolean previewEnabled = true;
     private boolean hapticEnabled = true;
     private int hapticLevel = 1;
-    private int oneHanded;
+    private int widthPercent = 100;
+    private int offsetPercent = 50;
+    private int liftPx;
+    private long longPressMs = LONG_PRESS_MS;
+    private boolean showHints = true;
+    private boolean swipeDelete = true;
+    private int artStrength = 60;
+    private final RectF area = new RectF();
     private boolean previewOnly;
     private long animStart;
 
@@ -83,6 +94,8 @@ public final class KeyboardView extends View {
         boolean popupOpen;
         float popupStartX;
         boolean popupMoved;
+        boolean deleteSwipe;
+        int deleteWords;
         boolean spaceSwipe;
         boolean cursorMode;
         float cursorOriginX;
@@ -162,10 +175,27 @@ public final class KeyboardView extends View {
 
     public void setHaptics(boolean enabled, int level) { hapticEnabled = enabled; hapticLevel = level; }
 
-    public void setOneHanded(int mode) {
-        if (oneHanded == mode) return;
-        oneHanded = mode;
+    /** Key area: width 55..100 % of the view, horizontal position 0 (left)..100 (right), lift above the bottom. */
+    public void setArea(int widthPct, int offsetPct, int lift) {
+        if (widthPct == widthPercent && offsetPct == offsetPercent && lift == liftPx) return;
+        widthPercent = widthPct;
+        offsetPercent = offsetPct;
+        liftPx = lift;
         geometryDirty = true;
+        invalidate();
+    }
+
+    /** The rectangle the keys occupy (for the resize frame). */
+    public RectF areaRect() {
+        if (geometryDirty) computeGeometry();
+        return area;
+    }
+
+    public void setTypingOptions(long longPress, boolean hints, boolean swipeDeleteWords, int art) {
+        longPressMs = longPress;
+        showHints = hints;
+        swipeDelete = swipeDeleteWords;
+        artStrength = art;
         invalidate();
     }
 
@@ -196,12 +226,11 @@ public final class KeyboardView extends View {
         float H = getHeight();
         float padH = 3 * density;
         float padTop = 3 * density;
-        float padBottom = 3 * density;
-        float areaLeft = 0, areaRight = W;
-        if (oneHanded != 0) {
-            float aw = W * 0.84f;
-            if (oneHanded == 1) { areaLeft = 0; areaRight = aw; } else { areaLeft = W - aw; areaRight = W; }
-        }
+        float padBottom = 3 * density + liftPx;
+        float aw = W * widthPercent / 100f;
+        float areaLeft = (W - aw) * offsetPercent / 100f, areaRight = areaLeft + aw;
+        area.set(areaLeft, padTop - 2 * density, areaRight, H - padBottom + 2 * density);
+        boolean side = widthPercent < 95 && (offsetPercent <= 5 || offsetPercent >= 95) && W - aw >= 36 * density;
         float unit = (areaRight - areaLeft - 2 * padH) / layout.units;
         float totalDp = layout.totalHeightDp();
         float scaleY = (H - padTop - padBottom) / (totalDp * density);
@@ -223,11 +252,12 @@ public final class KeyboardView extends View {
             }
             y += rh;
         }
-        if (oneHanded != 0) {
-            float colLeft = oneHanded == 1 ? areaRight : 0;
-            float colRight = oneHanded == 1 ? W : areaLeft;
+        if (side) {
+            boolean left = offsetPercent <= 5;
+            float colLeft = left ? areaRight : 0;
+            float colRight = left ? W : areaLeft;
             float mid = (padTop + H - padBottom) / 2f;
-            swapKey = Key.fn(Key.ONE_HAND_SWAP, oneHanded == 1 ? "يمين" : "يسار", 1f, "نقل اللوحة إلى الجهة الأخرى");
+            swapKey = Key.fn(Key.ONE_HAND_SWAP, left ? "يمين" : "يسار", 1f, "نقل اللوحة إلى الجهة الأخرى");
             exitKey = Key.fn(Key.ONE_HAND_EXIT, "كامل", 1f, "إيقاف وضع اليد الواحدة");
             swapKey.rect.set(colLeft + gapH, padTop + gapV, colRight - gapH, mid - gapV / 2f);
             exitKey.rect.set(colLeft + gapH, mid + gapV / 2f, colRight - gapH, H - padBottom - gapV);
@@ -256,6 +286,7 @@ public final class KeyboardView extends View {
     @Override protected void onDraw(Canvas canvas) {
         if (geometryDirty) computeGeometry();
         canvas.drawColor(theme.background);
+        ThemeArt.draw(canvas, getWidth(), getHeight(), theme.art, artStrength);
         float anim = 1f;
         if (animStart > 0) {
             long t = SystemClock.uptimeMillis() - animStart;
@@ -278,6 +309,7 @@ public final class KeyboardView extends View {
                 case Key.SHIFT: drawShift(canvas, k, fg); break;
                 case Key.DELETE: drawDelete(canvas, k, fg); break;
                 case Key.ENTER: drawEnter(canvas, k, fg); break;
+                case Key.ARROW: drawArrow(canvas, k, fg); break;
                 case Key.GLOBE: drawGlobe(canvas, k, fg); break;
                 case Key.SPACE: drawSpace(canvas, k, alpha); break;
                 default: drawLabel(canvas, k, fg, alpha);
@@ -299,9 +331,9 @@ public final class KeyboardView extends View {
         textPaint.setColor(color);
         textPaint.setAlpha(alpha);
         Paint.FontMetrics fm = textPaint.getFontMetrics();
-        float cy = k.rect.centerY() + (k.hint != null ? 3 * density : 0);
+        float cy = k.rect.centerY() + (k.hint != null && showHints ? 3 * density : 0);
         canvas.drawText(label, k.rect.centerX(), cy - (fm.ascent + fm.descent) / 2f, textPaint);
-        if (k.hint != null) {
+        if (k.hint != null && showHints) {
             hintPaint.setTextSize(11 * sp * fontPercent / 100f);
             hintPaint.setColor(theme.hint | 0xFF000000);
             hintPaint.setAlpha((int) (alpha * 0.6f));
@@ -366,6 +398,18 @@ public final class KeyboardView extends View {
         float xc = (l + 7 * density + r) / 2f, d = 3.5f * density;
         canvas.drawLine(xc - d, cy - d, xc + d, cy + d, iconPaint);
         canvas.drawLine(xc - d, cy + d, xc + d, cy - d, iconPaint);
+    }
+
+    private void drawArrow(Canvas canvas, Key k, int color) {
+        prepIcon(color);
+        float cx = k.rect.centerX(), cy = k.rect.centerY(), s = 7 * density;
+        canvas.save();
+        float deg = "left".equals(k.output) ? 180 : "up".equals(k.output) ? -90 : "down".equals(k.output) ? 90 : 0;
+        canvas.rotate(deg, cx, cy);
+        canvas.drawLine(cx - s, cy, cx + s, cy, iconPaint);
+        canvas.drawLine(cx + s * 0.3f, cy - s * 0.7f, cx + s, cy, iconPaint);
+        canvas.drawLine(cx + s * 0.3f, cy + s * 0.7f, cx + s, cy, iconPaint);
+        canvas.restore();
     }
 
     private void drawGlobe(Canvas canvas, Key k, int color) {
@@ -528,11 +572,27 @@ public final class KeyboardView extends View {
         pointers.put(id, p);
         haptic();
         showPreview(k);
-        if (k.type == Key.DELETE) {
-            if (listener != null) listener.onDelete(0);
+        if (k.type == Key.ARROW) {
+            if (listener != null) listener.onKey(k, null);
             p.committed = true;
             p.repeater = new Runnable() {
                 @Override public void run() {
+                    if (listener != null) listener.onKey(p.key, null);
+                    postDelayed(this, REPEAT_MS);
+                }
+            };
+            postDelayed(p.repeater, REPEAT_START_MS);
+        } else if (k.type == Key.DELETE) {
+            // With swipe-to-delete-words on, a plain tap deletes on release so a swipe never eats a letter.
+            if (!swipeDelete) {
+                if (listener != null) listener.onDelete(0);
+                p.committed = true;
+            }
+            p.repeater = new Runnable() {
+                @Override public void run() {
+                    if (p.deleteSwipe) return;
+                    if (p.repeat == 0 && swipeDelete && listener != null) listener.onDelete(0);
+                    p.committed = true;
                     p.repeat++;
                     if (listener != null) listener.onDelete(p.repeat);
                     postDelayed(this, p.repeat > 15 ? REPEAT_MS * 3 : REPEAT_MS);
@@ -541,7 +601,7 @@ public final class KeyboardView extends View {
             postDelayed(p.repeater, REPEAT_START_MS);
         } else if ((k.type == Key.CHAR && k.popup != null) || k.type == Key.SPACE || k.type == Key.GLOBE) {
             p.longPress = () -> onLongPress(p);
-            postDelayed(p.longPress, LONG_PRESS_MS);
+            postDelayed(p.longPress, longPressMs);
         }
         invalidate();
     }
@@ -580,6 +640,23 @@ public final class KeyboardView extends View {
             if (p.popupMoved) overlay.selectAt(overlayX(x));
             return;
         }
+        if (p.key.type == Key.DELETE && swipeDelete && p.repeat == 0) {
+            float dx = p.downX - x;
+            if (!p.deleteSwipe && dx > 24 * density && dx > 1.5f * Math.abs(y - p.downY)) {
+                p.deleteSwipe = true;
+                if (p.repeater != null) { removeCallbacks(p.repeater); p.repeater = null; }
+            }
+            if (p.deleteSwipe) {
+                int words = Math.max(0, (int) ((dx - 24 * density) / (28 * density)) + 1);
+                if (dx < 24 * density) words = 0;
+                if (words != p.deleteWords) {
+                    p.deleteWords = words;
+                    haptic();
+                    if (listener != null) listener.onDeleteSwipe(words);
+                }
+            }
+            return;
+        }
         if (p.key.type == Key.SPACE) {
             float dx = x - p.downX;
             if (p.cursorMode) {
@@ -610,9 +687,12 @@ public final class KeyboardView extends View {
                 if (shifted && p.key.caseable) out = out.toUpperCase(java.util.Locale.US);
                 listener.onKey(p.key, out);
             }
+        } else if (p.deleteSwipe) {
+            if (listener != null) listener.onDeleteSwipeEnd();
         } else if (!p.committed) {
             switch (p.key.type) {
                 case Key.CHAR: commitChar(p); break;
+                case Key.DELETE: if (listener != null) listener.onDelete(0); break;
                 case Key.SPACE:
                     if (p.spaceSwipe) { if (listener != null) listener.onSpaceSwipe(); }
                     else if (!p.cursorMode && listener != null) listener.onKey(p.key, " ");
