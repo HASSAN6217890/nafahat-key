@@ -47,6 +47,7 @@ public final class KeyboardEngine {
     public boolean arabic(){return arabic;}
     public boolean upper(){return caps||shift;}
     public String mode(){return mode;}
+    public String composingText(){return composing.toString();}
     public void setMode(String value){
         if(sensitive&&("library".equals(value)||"menu".equals(value)))return;
         mode=value;changed();
@@ -95,8 +96,8 @@ public final class KeyboardEngine {
                 shiftTime=now;changed();return;
             case "123":mode="symbols1";changed();return;
             case "ABC":case "حروف":mode="letters";changed();return;
-            case "=\\<":mode="symbols2";changed();return;
-            case "?123":mode="symbols1";changed();return;
+            case "symbols2":mode="symbols2";changed();return;
+            case "symbols1":mode="symbols1";changed();return;
             case "◌":mode="diacritics";changed();return;
             case "⌫":delete(false);return;
             case "deleteWord":delete(true);return;
@@ -109,7 +110,7 @@ public final class KeyboardEngine {
            code.equals("؛")||code.equals(":")||code.equals(";")||code.equals("\n")){
             finalizeWord(code);return;
         }
-        if(code.matches("[a-zA-Z\\u0621-\\u064A\\u0671]+")&&mode.equals("letters")&&!sensitive){
+        if((code.equals("#")&&composing.length()==0||code.matches("[a-zA-Z\\u0621-\\u064A\\u0671]+"))&&mode.equals("letters")&&!sensitive){
             clearUndo();
             String output=!arabic&&(shift||caps)?code.toUpperCase(Locale.ROOT):code;
             composing.append(output);
@@ -175,6 +176,15 @@ public final class KeyboardEngine {
             ic.commitText(undoOriginal+undoDelimiter,1);
         }finally{ic.endBatchEdit();}
         clearUndo();changed();
+    }
+    public void replaceComposingWithSnippet(String value){
+        if(sensitive)return;
+        InputConnection ic=ic();if(ic==null)return;
+        clearUndo();
+        ic.beginBatchEdit();
+        try{ic.commitText(value,1);composing.setLength(0);}
+        finally{ic.endBatchEdit();}
+        mode="letters";changed();
     }
     public void insertSnippet(String value){
         if(sensitive)return;
