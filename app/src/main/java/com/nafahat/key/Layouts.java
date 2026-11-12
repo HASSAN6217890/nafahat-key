@@ -39,10 +39,15 @@ public final class Layouts {
 
     private static Key del(float width) { return Key.fn(Key.DELETE, null, width, "حذف"); }
 
+    private static Key globe(float width) { return Key.fn(Key.GLOBE, null, width, "تبديل لوحة المفاتيح"); }
+
     private static Key toSymbols(float width) { return Key.fn(Key.TO_SYMBOLS, "123", width, "الرموز والأرقام"); }
 
     // ---------------------------------------------------------------- Arabic
-    public static Layout arabic(boolean numberRow) {
+    public static Layout arabic(boolean numberRow) { return arabic(numberRow, false); }
+
+    /** globe: show the 🌐 key that switches to the phone's other keyboards. */
+    public static Layout arabic(boolean numberRow, boolean globe) {
         List<Layout.Row> rows = new ArrayList<>();
         if (numberRow) rows.add(new Layout.Row(0f, H_NUM, digitsRow(1.2f)));
         rows.add(new Layout.Row(0f, H_ROW,
@@ -57,18 +62,29 @@ public final class Layouts {
             Key.ch("ئ", "_"), Key.ch("ء", "~"), Key.ch("ؤ", "-"), Key.ch("ر", "+"),
             Key.ch("ى", ":"), Key.ch("ة", "؛"), Key.ch("و", "/", "ؤ"), Key.ch("ز", "ژ"),
             Key.ch("ط", "\""), Key.ch("ظ", "ـِ"), del(1.5f)));
-        rows.add(new Layout.Row(0f, H_ROW,
-            toSymbols(1.6f),
-            new Key(Key.CHAR, "،", "،", "ـَ", DIACRITICS, 1.3f, false, "فاصلة، اضغط مطولاً للحركات"),
-            space("العربية", 5.8f),
-            new Key(Key.CHAR, ".", ".", "؟!", new String[]{"؟", "!", "؛", "…", ":"}, 1.3f, false, "نقطة"),
-            enter(2.0f)));
-        return new Layout(numberRow ? "ar_num" : "ar", 12f, true, true, rows.toArray(new Layout.Row[0]));
+        if (globe) {
+            rows.add(new Layout.Row(0f, H_ROW,
+                toSymbols(1.5f), globe(1.1f),
+                new Key(Key.CHAR, "،", "،", "ـَ", DIACRITICS, 1.1f, false, "فاصلة، اضغط مطولاً للحركات"),
+                space("العربية", 5.3f),
+                new Key(Key.CHAR, ".", ".", "؟!", new String[]{"؟", "!", "؛", "…", ":"}, 1.1f, false, "نقطة"),
+                enter(1.9f)));
+        } else {
+            rows.add(new Layout.Row(0f, H_ROW,
+                toSymbols(1.6f),
+                new Key(Key.CHAR, "،", "،", "ـَ", DIACRITICS, 1.3f, false, "فاصلة، اضغط مطولاً للحركات"),
+                space("العربية", 5.8f),
+                new Key(Key.CHAR, ".", ".", "؟!", new String[]{"؟", "!", "؛", "…", ":"}, 1.3f, false, "نقطة"),
+                enter(2.0f)));
+        }
+        return new Layout((numberRow ? "ar_num" : "ar") + (globe ? "_g" : ""), 12f, true, true, rows.toArray(new Layout.Row[0]));
     }
 
     // ---------------------------------------------------------------- English
     /** variant: 0 normal text, 1 email, 2 url. */
-    public static Layout english(boolean numberRow, int variant) {
+    public static Layout english(boolean numberRow, int variant) { return english(numberRow, variant, false); }
+
+    public static Layout english(boolean numberRow, int variant, boolean globe) {
         List<Layout.Row> rows = new ArrayList<>();
         if (numberRow) rows.add(new Layout.Row(0f, H_NUM, digitsRow(1f)));
         String[] r1 = {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"};
@@ -90,16 +106,20 @@ public final class Layouts {
         Key dot = new Key(Key.CHAR, ".", ".", "?!", new String[]{"?", "!", ",", ";", ":", "…"}, 1f, false, "نقطة");
         if (variant == 1 || variant == 2) {
             String extra = variant == 1 ? "@" : "/";
-            rows.add(new Layout.Row(0f, H_ROW,
-                toSymbols(1.5f), Key.ch(extra), space("English", 3.5f),
-                new Key(Key.CHAR, ".com", ".com", null, new String[]{".com", ".net", ".org", ".sy", ".sa"}, 1.5f, false, "دوت كوم"),
-                dot, enter(1.5f)));
+            Key com = new Key(Key.CHAR, ".com", ".com", null, new String[]{".com", ".net", ".org", ".sy", ".sa"}, 1.5f, false, "دوت كوم");
+            if (globe) rows.add(new Layout.Row(0f, H_ROW,
+                toSymbols(1.3f), globe(1f), Key.ch(extra), space("English", 2.7f), com, dot, enter(1.5f)));
+            else rows.add(new Layout.Row(0f, H_ROW,
+                toSymbols(1.5f), Key.ch(extra), space("English", 3.5f), com, dot, enter(1.5f)));
         } else {
-            rows.add(new Layout.Row(0f, H_ROW,
-                toSymbols(1.5f), new Key(Key.CHAR, ",", ",", null, null, 1f, false, "فاصلة"),
-                space("English", 4.5f), dot, enter(2.0f)));
+            Key comma = new Key(Key.CHAR, ",", ",", null, null, 1f, false, "فاصلة");
+            if (globe) rows.add(new Layout.Row(0f, H_ROW,
+                toSymbols(1.3f), globe(1f), comma, space("English", 3.7f), dot, enter(2.0f)));
+            else rows.add(new Layout.Row(0f, H_ROW,
+                toSymbols(1.5f), comma, space("English", 4.5f), dot, enter(2.0f)));
         }
-        String id = "en" + (numberRow ? "_num" : "") + (variant == 1 ? "_mail" : variant == 2 ? "_url" : "");
+        String id = "en" + (numberRow ? "_num" : "") + (variant == 1 ? "_mail" : variant == 2 ? "_url" : "")
+            + (globe ? "_g" : "");
         return new Layout(id, 10f, false, true, rows.toArray(new Layout.Row[0]));
     }
 

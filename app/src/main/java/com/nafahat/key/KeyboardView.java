@@ -33,6 +33,8 @@ public final class KeyboardView extends View {
         void onSpaceSwipe();
         /** Long-press on space then drag: relative cursor steps (positive = visually right). */
         void onCursorMove(int steps);
+        /** Long-press on a function key (the 🌐 key opens the keyboard picker). */
+        void onKeyLongPress(Key key);
     }
 
     private static final long LONG_PRESS_MS = 300;
@@ -276,6 +278,7 @@ public final class KeyboardView extends View {
                 case Key.SHIFT: drawShift(canvas, k, fg); break;
                 case Key.DELETE: drawDelete(canvas, k, fg); break;
                 case Key.ENTER: drawEnter(canvas, k, fg); break;
+                case Key.GLOBE: drawGlobe(canvas, k, fg); break;
                 case Key.SPACE: drawSpace(canvas, k, alpha); break;
                 default: drawLabel(canvas, k, fg, alpha);
             }
@@ -363,6 +366,17 @@ public final class KeyboardView extends View {
         float xc = (l + 7 * density + r) / 2f, d = 3.5f * density;
         canvas.drawLine(xc - d, cy - d, xc + d, cy + d, iconPaint);
         canvas.drawLine(xc - d, cy + d, xc + d, cy - d, iconPaint);
+    }
+
+    private void drawGlobe(Canvas canvas, Key k, int color) {
+        prepIcon(color);
+        iconPaint.setStrokeWidth(1.6f * density);
+        float cx = k.rect.centerX(), cy = k.rect.centerY(), r = 9 * density;
+        canvas.drawCircle(cx, cy, r, iconPaint);
+        tmp.set(cx - r * 0.45f, cy - r, cx + r * 0.45f, cy + r);
+        canvas.drawOval(tmp, iconPaint);
+        canvas.drawLine(cx - r, cy, cx + r, cy, iconPaint);
+        canvas.drawLine(cx, cy - r, cx, cy + r, iconPaint);
     }
 
     private void drawEnter(Canvas canvas, Key k, int color) {
@@ -525,7 +539,7 @@ public final class KeyboardView extends View {
                 }
             };
             postDelayed(p.repeater, REPEAT_START_MS);
-        } else if ((k.type == Key.CHAR && k.popup != null) || k.type == Key.SPACE) {
+        } else if ((k.type == Key.CHAR && k.popup != null) || k.type == Key.SPACE || k.type == Key.GLOBE) {
             p.longPress = () -> onLongPress(p);
             postDelayed(p.longPress, LONG_PRESS_MS);
         }
@@ -535,6 +549,12 @@ public final class KeyboardView extends View {
     private void onLongPress(Pointer p) {
         p.longPress = null;
         if (pointers.get(p.id) != p || p.committed) return;
+        if (p.key.type == Key.GLOBE) {
+            p.committed = true;
+            haptic();
+            if (listener != null) listener.onKeyLongPress(p.key);
+            return;
+        }
         if (p.key.type == Key.SPACE) {
             if (p.spaceSwipe) return;
             p.cursorMode = true;

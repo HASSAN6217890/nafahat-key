@@ -15,6 +15,7 @@ public final class Key {
     public static final int SYM_PAGE = 7;
     public static final int ONE_HAND_SWAP = 8;
     public static final int ONE_HAND_EXIT = 9;
+    public static final int GLOBE = 10;
 
     public final int type;
     public final String label;

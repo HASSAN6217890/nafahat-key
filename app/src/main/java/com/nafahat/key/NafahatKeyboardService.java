@@ -31,7 +31,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         PANEL_EDIT = 4, PANEL_LIBRARY = 5, PANEL_MORE = 6;
 
     private static final int C_LIBRARY = 1, C_THEME = 2, C_RESIZE = 3, C_ONE_HAND = 4, C_EDIT = 5,
-        C_DIACRITICS = 6, C_LANGUAGE = 7, C_UNDO = 8, C_SETTINGS = 9;
+        C_DIACRITICS = 6, C_LANGUAGE = 7, C_UNDO = 8, C_SETTINGS = 9, C_SWITCH_IME = 11;
     private static final int C_BACK = 10;
     private static final int C_T_NAFAHAT = 21, C_T_DARK = 22, C_T_LIGHT = 23, C_T_SYSTEM = 24;
     private static final int C_H_LEFT = 31, C_H_RIGHT = 32, C_H_OFF = 33;
@@ -44,7 +44,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private Theme theme;
     private final ExecutorService bg = Executors.newSingleThreadExecutor();
 
-    private FrameLayout root;
+    private RootLayout root;
     private View spacer;
     private CandidateStrip strip;
     private FrameLayout content;
@@ -59,6 +59,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private boolean resizing;
     private boolean selecting;
     private boolean numberRowCached;
+    private boolean globeCached;
     private final Map<String, Layout> layouts = new HashMap<>();
     private final int[] loc = new int[2];
 
@@ -81,10 +82,11 @@ public final class NafahatKeyboardService extends InputMethodService implements 
 
     @Override public View onCreateInputView() {
         float d = getResources().getDisplayMetrics().density;
-        root = new FrameLayout(this);
+        root = new RootLayout(this);
         root.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(android.view.Gravity.BOTTOM);
         spacer = new View(this);
         spacer.setBackgroundColor(Color.TRANSPARENT);
         column.addView(spacer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.round(28 * d)));
@@ -103,10 +105,23 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         content.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(library, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         column.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(column, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.gravity = android.view.Gravity.BOTTOM;
+        root.addView(column, clp);
+        root.column = column;
         overlay = new PreviewOverlay(this);
         root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         keyboard.setOverlay(overlay);
+        root.overlay = overlay;
+        // Android 15 edge-to-edge: keep the keys above the gesture / navigation bar.
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int bottom = 0;
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                bottom = insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom;
+            }
+            if (content.getPaddingBottom() != bottom) content.setPadding(0, 0, 0, bottom);
+            return insets;
+        });
         layouts.clear();
         applyPrefs();
         showPanel(PANEL_KEYS);
@@ -171,6 +186,8 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     private void applyPrefs() {
         theme = prefs.resolveTheme(this);
         if (numberRowCached != prefs.numberRow()) { layouts.clear(); numberRowCached = prefs.numberRow(); }
+        boolean globe = offerSwitching();
+        if (globeCached != globe) { layouts.clear(); globeCached = globe; }
         int h = KeyboardView.computeHeight(this, layoutFor("ar"), prefs.heightPercent());
         // Reserve room above the strip so the tallest preview / long-press bubble never clips.
         float d = getResources().getDisplayMetrics().density;
@@ -204,10 +221,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         if (l != null) return l;
         boolean num = prefs.numberRow();
         switch (id) {
-            case "ar": l = Layouts.arabic(num); break;
-            case "en": l = Layouts.english(num, 0); break;
-            case "en_mail": l = Layouts.english(num, 1); break;
-            case "en_url": l = Layouts.english(num, 2); break;
+            case "ar": l = Layouts.arabic(num, globeCached); break;
+            case "en": l = Layouts.english(num, 0, globeCached); break;
+            case "en_mail": l = Layouts.english(num, 1, globeCached); break;
+            case "en_url": l = Layouts.english(num, 2, globeCached); break;
             case "sym1_ar": l = Layouts.symbols(1, true); break;
             case "sym2_ar": l = Layouts.symbols(2, true); break;
             case "sym1_en": l = Layouts.symbols(1, false); break;
@@ -277,6 +294,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
         cells.add(cell(C_LANGUAGE, handler.arabic() ? "English" : "العربية", "🌐"));
         cells.add(cell(C_UNDO, "تراجع", "↶"));
         cells.add(cell(C_SETTINGS, "الإعدادات", "⚙"));
+        cells.add(cell(C_SWITCH_IME, "تبديل لوحة المفاتيح", "🌐"));
         grid.setCells(cells, 3, null);
     }
 
@@ -348,6 +366,10 @@ public final class NafahatKeyboardService extends InputMethodService implements 
                 prefs.setOneHanded(prefs.oneHanded() == 1 ? 2 : 1);
                 keyboard.setOneHanded(prefs.oneHanded());
                 break;
+            case Key.GLOBE:
+                handler.commitWordAsIs();
+                switchToNextKeyboard();
+                break;
             case Key.ONE_HAND_EXIT:
                 prefs.setOneHanded(0);
                 keyboard.setOneHanded(0);
@@ -361,6 +383,46 @@ public final class NafahatKeyboardService extends InputMethodService implements 
     @Override public void onSpaceSwipe() { switchLanguage(); }
 
     @Override public void onCursorMove(int steps) { handler.onCursorMove(steps); }
+
+    @Override public void onKeyLongPress(Key key) {
+        if (key.type == Key.GLOBE) showImePicker();
+    }
+
+    // ------------------------------------------------------------------ other keyboards (🌐)
+    private android.os.IBinder windowToken() {
+        Window w = getWindow() != null ? getWindow().getWindow() : null;
+        return w == null ? null : w.getAttributes().token;
+    }
+
+    private boolean offerSwitching() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 28) return shouldOfferSwitchingToNextInputMethod();
+            android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            android.os.IBinder t = windowToken();
+            return imm != null && t != null && imm.shouldOfferSwitchingToNextInputMethod(t);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void switchToNextKeyboard() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 28) { switchToNextInputMethod(false); return; }
+            android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            android.os.IBinder t = windowToken();
+            if (imm != null && t != null && !imm.switchToNextInputMethod(t, false)) showImePicker();
+        } catch (RuntimeException e) {
+            showImePicker();
+        }
+    }
+
+    private void showImePicker() {
+        android.view.inputmethod.InputMethodManager imm =
+            (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) imm.showInputMethodPicker();
+    }
 
     private void switchLanguage() {
         if (handler.isEmail() || handler.isUrl() || handler.isNumeric() || handler.isPhone()) return;
@@ -405,6 +467,7 @@ public final class NafahatKeyboardService extends InputMethodService implements 
                 showPanel(PANEL_KEYS); applyLayout(true); break;
             case C_LANGUAGE: showPanel(PANEL_KEYS); switchLanguage(); break;
             case C_UNDO: showPanel(PANEL_KEYS); handler.undo(); break;
+            case C_SWITCH_IME: showPanel(PANEL_KEYS); showImePicker(); break;
             case C_SETTINGS: {
                 Intent i = new Intent(this, MainActivity.class);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -581,5 +644,26 @@ public final class NafahatKeyboardService extends InputMethodService implements 
 
     @Override public void runOnBackground(Runnable r) {
         try { bg.execute(r); } catch (RuntimeException ignored) { }
+    }
+
+    /**
+     * Input view root: as tall as the strip + keys only (never the whole screen). The overlay is
+     * measured to exactly the same height, so the bubbles use the transparent spacer at the top.
+     */
+    static final class RootLayout extends FrameLayout {
+        View column;
+        View overlay;
+
+        RootLayout(Context c) { super(c); }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            if (column == null || overlay == null) { super.onMeasure(widthSpec, heightSpec); return; }
+            int width = MeasureSpec.getSize(widthSpec);
+            int w = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY);
+            column.measure(w, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+            int h = column.getMeasuredHeight();
+            overlay.measure(w, MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY));
+            setMeasuredDimension(width, h);
+        }
     }
 }
