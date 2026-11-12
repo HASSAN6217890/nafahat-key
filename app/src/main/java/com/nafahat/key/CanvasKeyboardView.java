@@ -331,6 +331,13 @@ public final class CanvasKeyboardView extends View {
     @Override public boolean onTouchEvent(MotionEvent event){
         int action=event.getActionMasked();
         if(previewSnippet!=null){
+            if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP||
+               action==MotionEvent.ACTION_CANCEL){
+                int id=event.getPointerId(event.getActionIndex());
+                Press prior=fingers.get(id);
+                if(prior!=null&&prior.timer!=null)handler.removeCallbacks(prior.timer);
+                fingers.remove(id);invalidate();return true;
+            }
             if(action==MotionEvent.ACTION_DOWN){
                 float y=event.getY(),x=event.getX();
                 if(y>getHeight()-dp(66)){
