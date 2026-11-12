@@ -96,7 +96,7 @@ public final class LibraryDb extends SQLiteOpenHelper {
     public List<Snippet> getPersonal(){
         ArrayList<Snippet> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery(
-            "SELECT s.id,s.title,s.body,c.name FROM snippets s JOIN collections c ON c.id=s.collection_id WHERE c.builtin=0 ORDER BY c.sort,s.sort,s.title",null)){
+            "SELECT s.id,s.title,s.body,c.name FROM snippets s JOIN collections c ON c.id=s.collection_id WHERE c.builtin=0 AND c.archived=0 ORDER BY c.sort,s.sort,s.title",null)){
             while(c.moveToNext())out.add(new Snippet(c.getString(0),c.getString(1),c.getString(2),c.getString(3),false));
         }
         return out;
