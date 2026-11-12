@@ -1,20 +1,33 @@
 package com.nafahat.key;
 
+/** One saved text in the library. Built-in Nafahat texts carry a builtinKey and are read-only. */
 public final class Snippet {
-    public final String id;
-    public final String title;
-    public final String text;
-    public final String category;
-    public final boolean official;
+    public long id;
+    public long collectionId;
+    public String title = "";
+    public String body = "";
+    public String type = "أخرى";
+    public int sort;
+    public String shortcut = "";
+    public boolean pinned;
+    public long lastUsed;
+    public int useCount;
+    public long updatedAt;
+    public String builtinKey;
+    /** Only used by BrandData: 1 = «معلومات نفحات», 2 = «ردود جاهزة». */
+    public int builtinCollection;
 
-    public Snippet(String id, String title, String text, String category, boolean official) {
-        this.id = id;
-        this.title = title;
-        this.text = text;
-        this.category = category;
-        this.official = official;
+    public boolean isBuiltin() { return builtinKey != null; }
+
+    public static Snippet builtin(String key, int collection, String title, String body, String type) {
+        Snippet s = new Snippet();
+        s.builtinKey = key;
+        s.builtinCollection = collection;
+        s.title = title;
+        s.body = body;
+        s.type = type;
+        return s;
     }
-    public static Snippet official(String title, String text, String category) {
-        return new Snippet("public:" + category + ":" + title, title, text, category, true);
-    }
+
+    public boolean hasPlaceholders() { return body != null && body.matches("(?s).*\\{[^{}\\n]{1,20}\\}.*"); }
 }
