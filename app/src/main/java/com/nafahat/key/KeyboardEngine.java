@@ -25,6 +25,7 @@ public final class KeyboardEngine {
     private long shiftTime=0;
     private int cursorEnd=-1;
     private String undoOriginal=null,undoCorrected=null,undoDelimiter=null;
+    private int undoExpectedCursor=-1;
     public KeyboardEngine(InputMethodService service,KeyboardPrefs preferences,LearningModel learned,Callback cb){
         this.service=service;this.prefs=preferences;this.learning=learned;callback=cb;
         dictionary=new Lexicon(service,learned);
@@ -155,6 +156,7 @@ public final class KeyboardEngine {
         }else previousWord="";
         if(!next.equals(original)){
             undoOriginal=original;undoCorrected=next;undoDelimiter=delimiter;
+            undoExpectedCursor=cursorEnd<0?-1:cursorEnd+next.length()-original.length()+delimiter.length();
         }else clearUndo();
         changed();
     }
@@ -185,6 +187,12 @@ public final class KeyboardEngine {
     public void undo(){
         if(undoOriginal==null)return;
         InputConnection ic=ic();if(ic==null)return;
+        String suffix=undoCorrected+undoDelimiter;
+        CharSequence before=ic.getTextBeforeCursor(suffix.length(),0);
+        if(before==null||!suffix.contentEquals(before)||
+           (undoExpectedCursor>=0&&cursorEnd>=0&&cursorEnd!=undoExpectedCursor)){
+            clearUndo();changed();return;
+        }
         ic.beginBatchEdit();
         try{
             ic.deleteSurroundingTextInCodePoints(
@@ -244,9 +252,9 @@ public final class KeyboardEngine {
             composing.setLength(0);InputConnection ic=ic();if(ic!=null)ic.finishComposingText();
             changed();
         }
-        if(undoOriginal!=null&&start!=end)clearUndo();
+        if(undoOriginal!=null&&(start!=end||(undoExpectedCursor>=0&&end!=undoExpectedCursor)))clearUndo();
     }
-    private void clearUndo(){undoOriginal=null;undoCorrected=null;undoDelimiter=null;}
+    private void clearUndo(){undoOriginal=null;undoCorrected=null;undoDelimiter=null;undoExpectedCursor=-1;}
     private void changed(){if(callback!=null)callback.stateChanged();}
     private InputConnection ic(){return service.getCurrentInputConnection();}
     public static boolean isSensitive(EditorInfo info){
